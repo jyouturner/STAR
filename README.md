@@ -1,6 +1,6 @@
 # STAR: A Simple Training-free Approach for Recommendations using Large Language Models
 
-This repository implements the STAR (Simple Training-free Approach for Recommendation) framework as described in the paper ["STAR: A Simple Training-free Approach for Recommendations using Large Language Models"](https://arxiv.org/abs/2410.16458). The implementation focuses on the retrieval pipeline, which the paper shows achieves competitive performance even without the additional ranking stage.
+This repository implements the STAR (Simple Training-free Approach for Recommendation) as described in the paper ["STAR: A Simple Training-free Approach for Recommendations using Large Language Models"](https://arxiv.org/abs/2410.16458). The implementation focuses on the *retrieval pipeline*, which the paper shows achieves competitive performance even without the additional ranking stage.
 
 ## Overview
 
