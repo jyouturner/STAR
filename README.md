@@ -94,19 +94,19 @@ normalized_interactions = interaction_matrix / np.sqrt(user_activity)
 1. Install requirements:
 
 ```bash
-pip install -r requirements.txt
+poetry install
 ```
 
 2. Download Amazon Review dataset:
 
 ```python
-python download_data.py --category beauty
+poetry run python download_data.py --category beauty
 ```
 
 3. Run the implementation:
 
 ```python
-python main.py
+poetry run python src/main.py
 ```
 
 ## Key Parameters
