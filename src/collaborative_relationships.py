@@ -47,43 +47,19 @@ class CollaborativeRelationshipProcessor:
 
     def compute_collaborative_relationships(self, matrix_size):
         """
-        Compute collaborative relationship matrix using normalized co-occurrence
-        Optimized version using vectorized operations
+        Compute collaborative relationships using normalized co-occurrence
+        following paper's specification.
         """
-        print("\nComputing collaborative relationships...")
-        
-        if self.interaction_matrix is None:
-            raise ValueError("Must process interactions before computing relationships")
-            
-        # Convert to dense for user activity normalization
         interaction_matrix = self.interaction_matrix.toarray()
+        # Normalize only by user activity per paper
+        user_activity = np.sum(interaction_matrix, axis=0)
+        user_activity[user_activity == 0] = 1
+        normalized = interaction_matrix / np.sqrt(user_activity)
         
-        # Normalize by user activity (sqrt of activity as per paper)
-        user_activity = np.sum(interaction_matrix, axis=0, keepdims=True)
-        user_activity[user_activity == 0] = 1  # Avoid division by zero
-        normalized_interactions = interaction_matrix / np.sqrt(user_activity)
+        # Compute normalized co-occurrence
+        collaborative_matrix = normalized @ normalized.T
+        np.fill_diagonal(collaborative_matrix, 0)  # Zero out self-similarities
         
-        print("Computing normalized co-occurrences using matrix operations...")
-        
-        # Compute all similarities at once using matrix multiplication
-        # This is equivalent to computing cosine similarity between all pairs
-        # but much faster than doing it pair by pair
-        dot_product = np.dot(normalized_interactions, normalized_interactions.T)
-        
-        # Compute norms for all vectors at once
-        norms = np.sqrt(np.sum(normalized_interactions ** 2, axis=1))
-        norms[norms == 0] = 1  # Avoid division by zero
-        
-        # Compute cosine similarities using broadcasting
-        cosine_similarities = dot_product / np.outer(norms, norms)
-        
-        # Convert to 1 - cosine distance and ensure non-negative
-        collaborative_matrix = np.maximum(0, cosine_similarities)
-        
-        # Set diagonal to 0 as items shouldn't have similarity with themselves
-        np.fill_diagonal(collaborative_matrix, 0)
-        
-        print("Collaborative relationship computation complete")
         return collaborative_matrix
 
     def get_item_co_occurrences(self, item_id: str) -> Dict[str, int]:

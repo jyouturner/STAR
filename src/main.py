@@ -2,10 +2,11 @@ import os
 import numpy as np
 from pathlib import Path
 from item_embeddings_huggingface import ItemEmbeddingGenerator
-from optimized_collaborative_relationships import OptimizedCollaborativeProcessor
 from star_retrieval import STARRetrieval
 from collaborative_relationships import CollaborativeRelationshipProcessor
-from evaluation_metrics import RecommendationEvaluator, prepare_evaluation_data
+from evaluation_metrics import RecommendationEvaluator, prepare_evaluation_data, prepare_validation_data
+from model_analysis import run_full_analysis
+
 from utils import (
     load_amazon_dataset,
     load_amazon_metadata,
@@ -17,15 +18,10 @@ from utils import (
 def save_embeddings(embeddings, save_dir='data/embeddings'):
     """Save embeddings to disk"""
     Path(save_dir).mkdir(parents=True, exist_ok=True)
-    
-    # Convert embeddings dict to numpy array
     items = sorted(embeddings.keys())
     embedding_array = np.stack([embeddings[item] for item in items])
-    
-    # Save embeddings and item mapping
     np.save(f'{save_dir}/embeddings.npy', embedding_array)
     np.save(f'{save_dir}/items.npy', np.array(items))
-    
     print(f"Saved embeddings to {save_dir}")
 
 def load_embeddings(load_dir='data/embeddings'):
@@ -33,11 +29,8 @@ def load_embeddings(load_dir='data/embeddings'):
     try:
         embedding_array = np.load(f'{load_dir}/embeddings.npy')
         items = np.load(f'{load_dir}/items.npy')
-        
-        # Reconstruct embeddings dictionary and item_to_idx mapping
         embeddings = {item: emb for item, emb in zip(items, embedding_array)}
         item_to_idx = {item: idx for idx, item in enumerate(items)}
-        
         print(f"Loaded embeddings for {len(embeddings)} items")
         return embeddings, item_to_idx
     except FileNotFoundError:
@@ -45,78 +38,93 @@ def load_embeddings(load_dir='data/embeddings'):
         return None, None
 
 def main():
-    # Load limited data for testing
+    # Load data
     print("Loading data...")
     reviews = load_amazon_dataset("beauty", min_interactions=5)
     metadata = load_amazon_metadata("beauty", min_interactions=5)
 
-    # Process items and get embeddings
+    # Process items and embeddings
     print("Processing items and generating embeddings...")
     items = get_items_from_data(reviews, metadata)
     
-    # Try to load saved embeddings first
+    # Try loading saved embeddings first
     embeddings, item_to_idx = load_embeddings()
-    
     if embeddings is None:
-        print("Generating new embeddings...")
         embedding_generator = ItemEmbeddingGenerator()
         embeddings = embedding_generator.generate_item_embeddings(items)
-        # Save embeddings for future use
         save_embeddings(embeddings)
-    
+        item_to_idx = {item: idx for idx, item in enumerate(sorted(embeddings.keys()))}
+
     # Initialize retrieval with paper's parameters
     retrieval = STARRetrieval(
-        semantic_weight=0.5,  # Balance between semantic and collaborative
-        temporal_decay=0.7,   # Temporal decay factor
-        history_length=3      # Number of recent items to consider
+        semantic_weight=0.5,
+        temporal_decay=0.7,
+        history_length=3
     )
-    
-    # Create item_to_idx mapping here if needed
-    if item_to_idx is None:
-        item_to_idx = {item: idx for idx, item in enumerate(sorted(embeddings.keys()))}
-    
-    # Set the item_to_idx mapping
+
+    # Log parameters
+    print(f"\nParameters:")
+    print(f"Semantic weight: {retrieval.semantic_weight}")
+    print(f"Temporal decay: {retrieval.temporal_decay}")
+    print(f"History length: {retrieval.history_length}")
+
+    # Set item mapping and compute relationships
     retrieval.item_to_idx = item_to_idx
     
-    # Compute semantic relationships
     print("Computing semantic relationships...")
     semantic_matrix = retrieval.compute_semantic_relationships(embeddings)
     retrieval.semantic_matrix = semantic_matrix
-    
-    # Process user interactions and compute collaborative relationships
-    print("Processing collaborative relationships...")
-    train_interactions = get_training_interactions(reviews)
 
+    # Process collaborative relationships
+    print("Processing collaborative relationships...")
+    interactions = [(review['reviewerID'], review['asin'], 
+                    review['unixReviewTime'], review['overall']) 
+                   for review in reviews]
+
+    # Split data and prepare sequences
+    train_interactions = get_training_interactions(reviews)
+    print("Preparing evaluation data...")
+    validation_sequences = prepare_validation_data(interactions)
+    test_sequences = prepare_evaluation_data(interactions)
+
+    # Compute collaborative relationships
     collab_processor = CollaborativeRelationshipProcessor()
     collab_processor.process_interactions(train_interactions, item_mapping=retrieval.item_to_idx)
     collaborative_matrix = collab_processor.compute_collaborative_relationships(
         matrix_size=len(retrieval.item_to_idx)
     )
-
-    # Set the collaborative matrix in the retrieval object
+    
+    if collaborative_matrix is None:
+        raise ValueError("Failed to compute collaborative relationships")
+    
     retrieval.collaborative_matrix = collaborative_matrix
 
-    # Prepare evaluation data
-    print("Preparing evaluation data...")
-    test_sequences = prepare_evaluation_data([
-        (review['reviewerID'], review['asin'], 
-         review['unixReviewTime'], review['overall']) 
-        for review in reviews
-    ])
-    
-    # Run evaluation
-    print("Running evaluation...")
+    # After computing relationships but before evaluation
+    analysis_results = run_full_analysis(reviews, items, retrieval)
+    print(analysis_results)
+
+    # Run validation
+    print("\n=== Running Validation ===")
     evaluator = RecommendationEvaluator()
-    metrics = evaluator.evaluate_recommendations(
+    validation_metrics = evaluator.evaluate_recommendations(
+        test_sequences=validation_sequences,
+        recommender=retrieval,
+        k_values=[5, 10],
+        n_negative_samples=99
+    )
+    print("\nValidation Results:")
+    print_metrics_table(validation_metrics, dataset="Beauty")
+
+    # Run final evaluation
+    print("\n=== Running Test Evaluation ===")
+    test_metrics = evaluator.evaluate_recommendations(
         test_sequences=test_sequences,
         recommender=retrieval,
         k_values=[5, 10],
         n_negative_samples=99
     )
-
-    # Print results
-    print("\nEvaluation Results:")
-    print_metrics_table(metrics, dataset="Beauty")
+    print("\nTest Results:")
+    print_metrics_table(test_metrics, dataset="Beauty")
 
 if __name__ == "__main__":
     main()

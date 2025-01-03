@@ -179,45 +179,28 @@ def get_items_from_data(reviews: List[Dict[str, Any]], metadata: Dict[str, Dict[
     return items
 
 
-def get_training_interactions(reviews: List[Dict[str, Any]]) -> List[Tuple[str, str, float, str]]:
-    """
-    Extract training interactions from review data following paper's protocol:
-    - Only use interactions before test item
-    - Sort by time to ensure chronological order
-    - Only use items that appear before test sequence
-    
-    Args:
-        reviews: List of review dictionaries
-    Returns:
-        List of (user_id, item_id, timestamp, rating) tuples
-    """
-    # Sort reviews by user and time
+def get_training_interactions(reviews):
     sorted_reviews = sorted(reviews, key=lambda x: (x['reviewerID'], x['unixReviewTime']))
-    
-    # Group by user
     user_reviews = defaultdict(list)
+    
+    # Group reviews by user
     for review in sorted_reviews:
         user_reviews[review['reviewerID']].append(review)
-    
-    # Get training interactions
+        
     training_interactions = []
-    for user_id, user_history in user_reviews.items():
-        if len(user_history) >= 3:  # Need at least train + val + test
-            # Get timestamp of test item (last item)
-            test_time = user_history[-1]['unixReviewTime']
-            
-            # Only use interactions before test item
-            train_history = user_history[:-2]  # Exclude val & test
+    for user_id, group in user_reviews.items():
+        if len(group) >= 5:  # Match min_sequence_length
+            test_time = group[-1]['unixReviewTime']
+            train_history = group[:-2]
             
             for review in train_history:
                 if review['unixReviewTime'] < test_time:
                     training_interactions.append((
-                        review['reviewerID'],
+                        review['reviewerID'], 
                         review['asin'],
-                        review['unixReviewTime'],
-                        review['overall']
+                        review['unixReviewTime'], 
+                        1.0
                     ))
-    
     return training_interactions
 
 def print_metrics_table(metrics: Dict[str, float], dataset: str) -> None:

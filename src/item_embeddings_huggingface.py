@@ -7,24 +7,13 @@ import torch
 
 class ItemEmbeddingGenerator:
     def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2'):
-        """Initialize the embedding model"""
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         
-    def create_item_prompt(self, item: Dict[str, Any]) -> str:
-        """
-        Create a text prompt for an item following the paper's approach.
-        The paper mentions using title, description, category, brand, sales rank, and price,
-        but omitting ID and URL fields.
-        
-        Args:
-            item: Dictionary containing item metadata
-            
-        Returns:
-            Formatted text prompt for the item
-        """
+    def create_item_prompt(self, item: Dict) -> str:
+        """Create prompt following paper's approach, excluding ID/URL fields"""
         prompt_parts = []
         
         if 'title' in item:
@@ -34,18 +23,8 @@ class ItemEmbeddingGenerator:
             prompt_parts.append(f"Description: {item['description']}")
             
         if 'categories' in item:
-            if isinstance(item['categories'], list):
-                # Flatten nested lists and convert all items to strings
-                flat_cats = []
-                for cat in item['categories']:
-                    if isinstance(cat, list):
-                        flat_cats.extend(str(c) for c in cat)
-                    else:
-                        flat_cats.append(str(cat))
-                cats = ' > '.join(flat_cats)
-            else:
-                cats = str(item['categories'])
-            prompt_parts.append(f"Categories: {cats}")
+            cats = ' > '.join(item['categories'][-1]) if isinstance(item['categories'], list) else str(item['categories'])
+            prompt_parts.append(f"Category: {cats}")
             
         if 'brand' in item:
             prompt_parts.append(f"Brand: {item['brand']}")
