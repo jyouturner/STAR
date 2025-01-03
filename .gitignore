@@ -1,0 +1,12 @@
+# ingore usual Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ignore poetry cache
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.DS_Store

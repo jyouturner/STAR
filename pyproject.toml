@@ -1,0 +1,45 @@
+[tool.poetry]
+name = "star"
+version = "0.1.0"
+description = ""
+authors = ["jyouturner <jy2947@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = "^2.2.1"
+pandas = "^2.2.3"
+scipy = "^1.14.1"
+google-cloud-aiplatform = "^1.75.0"
+faiss-cpu = "^1.9.0.post1"
+tqdm = "^4.67.1"
+transformers = "^4.47.1"
+torch = "^2.5.1"
+
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.8.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "N",  # PEP8 naming conventions
+]
+ignore = [
+    "E501",  # line too long, handled by black
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
