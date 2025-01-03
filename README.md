@@ -142,21 +142,79 @@ The key parameters following the paper:
 
 ## Results
 
-On the Beauty dataset, this implementation achieves:
+On the Beauty dataset, output
 
 ```
+Loading data...
+First pass: Counting interactions...
+
+Before filtering:
+Total users: 22363
+Total items: 12101
+
+After filtering (>= 5 interactions):
+Valid users: 22363
+Valid items: 12101
+
+Second pass: Loading filtered data...
+
+Final filtered reviews: 198502
+First pass: Counting interactions...
+
+Before filtering:
+Total users: 22363
+Total items: 12101
+
+After filtering (>= 5 interactions):
+Valid users: 22363
+Valid items: 12101
+
+Second pass: Loading filtered data...
+
+Final filtered reviews: 198502
+
+Loading filtered metadata...
+Loaded metadata for 12101 items with 0 errors
+Processing items and generating embeddings...
+Loaded embeddings for 12101 items
+Computing semantic relationships...
+
+Computing semantic relationships...
+Computing semantic similarities...
+Processing collaborative relationships...
+
+Processing user-item interactions...
+Found 20484 users and 12101 items
+Built interaction matrix with 137119 non-zero entries
+
+Computing collaborative relationships...
+Computing normalized co-occurrences using matrix operations...
+Collaborative relationship computation complete
+Preparing evaluation data...
+Running evaluation...
+
+=== Starting Evaluation ===
+Evaluating: 100%|███████████████████████████| 22363/22363 [00:06<00:00, 3345.74it/s]
+
+Successfully evaluated 22363/22363 sequences
+
+Evaluation Results:
+
 Results for Beauty dataset:
 ------------------------------
 Metric          Score     
 ------------------------------
-hit@10          0.098
-hit@5           0.068
-ndcg@10         0.057
-ndcg@5          0.048
+hit@10          0.4184
+hit@5           0.3315
+ndcg@10         0.2895
+ndcg@5          0.2615
+------------------------------
 ```
 
-These results match the paper's reported performance for the retrieval stage.
 
+## Issues
+
+The results are not aligned with the paper's results.
 ## Citations
 
 ```bibtex
