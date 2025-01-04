@@ -22,6 +22,7 @@ EXCLUDED_FILES = {
     '.coverage', '.pytest_cache',
     '.DS_Store', '.env',
     '.gitignore',
+    '.md'
     'consolidated_project.md',
     os.path.basename(__file__)
 }
@@ -32,7 +33,7 @@ def should_process_path(path: str) -> bool:
 
 def collect_project_files(root_dir: str) -> Dict[str, str]:
     project_files = {}
-    important_files = ['pyproject.toml', 'README.md', 'requirements.txt']
+    important_files = ['pyproject.toml', 'requirements.txt']
     
     for root, dirs, files in os.walk(root_dir, topdown=True):
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS and not d.startswith('.')]
@@ -44,7 +45,7 @@ def collect_project_files(root_dir: str) -> Dict[str, str]:
             if any(file.endswith(ext) for ext in EXCLUDED_FILES) or file in EXCLUDED_FILES:
                 continue
                 
-            if file.endswith(('.py', '.toml', '.md', '.txt')) or file in important_files:
+            if file.endswith(('.py', '.toml', '.yaml', '.yml')) or file in important_files:
                 file_path = Path(root) / file
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:

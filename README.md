@@ -6,6 +6,8 @@ This repository implements the retrieval pipeline from the paper [STAR: A Simple
 2. User interaction patterns for collaborative signals 
 3. Temporal decay for recent history weighting
 
+---
+
 ## Key Components & Implementation Details
 
 ### 1. Item Embeddings (`item_embeddings_vertex_ai.py`)
@@ -27,6 +29,8 @@ Key implementation details:
 - Uses Vertex AI's `text-embedding-005` model (768 dimensions)
 - Excludes IDs/URLs to avoid trivial matching
 - Preserves complete metadata structure
+
+---
 
 ### 2. STAR Retrieval (`star_retrieval.py`)
 
@@ -145,6 +149,8 @@ The evaluation matches the paper's setup:
    - Timestamp ordering issues
    - Inadequate metadata in prompts
 
+---
+
 ## Key Parameters
 
 ```python
@@ -191,6 +197,12 @@ Despite these differences, our pipeline still **follows** the STAR retrieval log
 1. **5-Core Data** vs. raw 2014 data. We start from the 5-core snapshots, but the STAR paper might have had a different or earlier version.  
 2. **Metadata coverage**: Some items in `meta_Beauty.json.gz` have minimal text fields, while others have paragraphs. This can result in high average item–item similarity if many items share the same brand or repetitive bullet points.  
 3. **Single test item**: We only hold out the user’s final item as test. Some papers average performance across multiple test items per user, which typically lowers the reported metrics.
+
+---
+
+## Apply to Your Own Data
+
+See [Application Data Specification](application_data_spec.md) for how to prepare your own data.
 
 ---
 
