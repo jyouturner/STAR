@@ -1,0 +1,80 @@
+
+
+Fields: ['category', 'description', 'title']
+Metrics:
+hit@5: 0.3991
+hit@10: 0.4867
+ndcg@5: 0.3149
+ndcg@10: 0.3431
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.5885792527328697
+median_sim: 0.5843708517228574
+percentiles: [0.55343278 0.58437085 0.61844405]
+max_sim: 1.0
+min_nonzero: 0.3784515348345703
+
+
+Fields: ['brand', 'category', 'description', 'title']
+Metrics:
+hit@5: 0.4016
+hit@10: 0.4908
+ndcg@5: 0.3163
+ndcg@10: 0.3451
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.592085452183065
+median_sim: 0.58784833574214
+percentiles: [0.55710209 0.58784834 0.62173735]
+max_sim: 1.0
+min_nonzero: 0.3803194303167804
+
+
+Fields: ['category', 'description', 'price', 'title']
+Metrics:
+hit@5: 0.4022
+hit@10: 0.4883
+ndcg@5: 0.3159
+ndcg@10: 0.3436
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.6039595838697017
+median_sim: 0.600085251345748
+percentiles: [0.56923111 0.60008525 0.63376483]
+max_sim: 1.0
+min_nonzero: 0.39233099731798804
+
+
+Fields: ['category', 'description', 'sales_rank', 'title']
+Metrics:
+hit@5: 0.3971
+hit@10: 0.4877
+ndcg@5: 0.3132
+ndcg@10: 0.3425
+
+Semantic Statistics:
+sparsity: 8.267195767197588e-05
+mean_sim: 0.6077975172219833
+median_sim: 0.6038589289448102
+percentiles: [0.57286477 0.60385893 0.63780886]
+max_sim: 0.9999814416139519
+min_nonzero: 0.3841972122409252
+
+
+Fields: ['brand', 'category', 'description', 'price', 'sales_rank', 'title']
+Metrics:
+hit@5: 0.4009
+hit@10: 0.4872
+ndcg@5: 0.3158
+ndcg@10: 0.3436
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.6173292723661657
+median_sim: 0.6136043211232933
+percentiles: [0.58322746 0.61360432 0.64668684]
+max_sim: 0.9999578744507863
+min_nonzero: 0.4015257656153163

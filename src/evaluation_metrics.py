@@ -1,8 +1,18 @@
-import numpy as np
-from typing import Any, List, Dict, Tuple
 from collections import defaultdict
+from typing import Dict, List, Tuple
 import random
 from tqdm import tqdm
+import numpy as np
+
+def build_user_all_items(interactions: List[Tuple]) -> Dict[str, set]:
+    """
+    Build a dictionary mapping user_id -> set of all item_ids 
+    that user has interacted with (at any time).
+    """
+    user_all_items = defaultdict(set)
+    for user_id, item_id, timestamp, rating in interactions:
+        user_all_items[user_id].add(item_id)
+    return user_all_items
 
 class RecommendationEvaluator:
     def __init__(self):
@@ -23,17 +33,19 @@ class RecommendationEvaluator:
             return 0.0
         
         rank = recommended_items[:k].index(ground_truth)
-        return 1.0 / np.log2(rank + 2)  # +2 because index starts at 0
+        return 1.0 / np.log2(rank + 2)
 
     def evaluate_recommendations(
         self,
-        test_sequences,
+        test_sequences: List[Tuple],
         recommender,
         k_values: List[int],
-        n_negative_samples: int = 99  # Paper uses 99 negative samples
+        n_negative_samples: int = 99,  # Paper uses 99 negative samples
+        user_all_items: Dict[str, set] = None  # NEW: Dictionary of all items per user
     ) -> Dict[str, float]:
         """
-        Evaluate recommendations using the paper's protocol
+        Evaluate recommendations using the paper's protocol with proper negative sampling
+        that excludes all items a user has interacted with at any point in time
         """
         print("\n=== Starting Evaluation ===")
         metrics = {f"hit@{k}": 0.0 for k in k_values}
@@ -58,23 +70,28 @@ class RecommendationEvaluator:
             valid_history = [item for item in history if item in recommender.item_to_idx]
             if not valid_history:
                 continue
+
+            # NEW: Build set of items to exclude from negative sampling
+            if user_all_items is not None and user_id in user_all_items:
+                # Exclude any item the user has interacted with (past OR future)
+                excluded_items = set(user_all_items[user_id])
+            else:
+                # Fallback to old logic if user_all_items not provided
+                excluded_items = set(history) | {next_item}
             
-            # Sample negative items (excluding history and next item)
+            # Sample negative items (excluding all user interactions)
             negative_candidates = set()
-            excluded_items = set(history) | {next_item}
-            
-            # Sample exactly n_negative_samples items
             while len(negative_candidates) < n_negative_samples:
                 item = random.choice(valid_items)
                 if item not in excluded_items:
                     negative_candidates.add(item)
             
             # Create candidate set with negative samples + positive item
-            candidate_items = list(negative_candidates) + [next_item]  # Critical: Add positive item last
+            candidate_items = list(negative_candidates) + [next_item]
             
             # Get recommendations
             recommendations = recommender.score_candidates(
-                user_history=valid_history[-recommender.history_length:],  # Use last l items
+                user_history=valid_history[-recommender.history_length:],
                 ratings=[1.0] * len(valid_history),  # As per paper, ignore ratings
                 candidate_items=candidate_items,
                 top_k=max(k_values)

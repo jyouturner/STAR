@@ -1,127 +1,129 @@
-from typing import Dict, Any
+from vertexai.preview.language_models import TextEmbeddingModel
+from vertexai.language_models import TextEmbeddingInput
+from typing import Dict, List, Set
 import numpy as np
-import json
-from star_retrieval import STARRetrieval
-from vertexai.language_models import TextEmbeddingModel  # for Google's text-embedding-gecko
 
 class ItemEmbeddingGenerator:
-    def __init__(self):
-        """Initialize the embedding model"""
-        self.model = TextEmbeddingModel.from_pretrained("textembedding-gecko@latest")
-        
-    def create_item_prompt(self, item: Dict[str, Any]) -> str:
+    def __init__(self, 
+                output_dimension: int = 768,
+                include_fields: Set[str] = None):
         """
-        Create a text prompt for an item following the paper's approach.
-        The paper mentions using title, description, category, brand, sales rank, and price,
-        but omitting ID and URL fields.
+        Initialize generator with configurable fields
         
         Args:
-            item: Dictionary containing item metadata
-            
-        Returns:
-            Formatted text prompt for the item
+            output_dimension: Embedding dimension (default matches paper)
+            include_fields: Set of fields to include in prompt
+                          (title, description, category, brand, price, sales_rank)
         """
+        self.model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+        self.output_dimension = output_dimension
+        # Default to minimal set of fields if none specified
+        self.include_fields = include_fields or {'title', 'description', 'category'}
+        
+    def create_embedding_input(self, item_data: Dict) -> TextEmbeddingInput:
+        """Create simplified prompt following paper's structure"""
         prompt_parts = []
         
-        # Add title
-        if 'title' in item:
-            prompt_parts.append(f"Title: {item['title']}")
+        # Handle description first
+        if 'description' in self.include_fields:
+            desc = str(item_data.get('description', '')).strip()
+            if desc:
+                prompt_parts.append("description:")
+                prompt_parts.append(desc)
+        
+        # Add basic fields with minimal formatting
+        if 'title' in self.include_fields and (title := item_data.get('title')):
+            prompt_parts.append(f"title: {title}")
             
-        # Add description
-        if 'description' in item:
-            prompt_parts.append(f"Description: {item['description']}")
-            
-        # Add categories
-        if 'categories' in item:
-            if isinstance(item['categories'], list):
-                cats = ' > '.join(item['categories'])
+        if 'category' in self.include_fields and (cats := item_data.get('categories')):
+            if isinstance(cats[0], list):
+                category_str = " > ".join(cats[0])
             else:
-                cats = str(item['categories'])
-            prompt_parts.append(f"Categories: {cats}")
-            
-        # Add brand
-        if 'brand' in item:
-            prompt_parts.append(f"Brand: {item['brand']}")
-            
-        # Add sales rank
-        if 'salesRank' in item:
-            if isinstance(item['salesRank'], dict):
-                # Handle case where salesRank is category-specific
-                ranks = [f"{cat}: {rank}" for cat, rank in item['salesRank'].items()]
-                prompt_parts.append(f"Sales Rank: {', '.join(ranks)}")
-            else:
-                prompt_parts.append(f"Sales Rank: {item['salesRank']}")
+                category_str = " > ".join(cats)
+            if category_str:
+                prompt_parts.append(f"category: {category_str}")
                 
-        # Add price
-        if 'price' in item:
-            prompt_parts.append(f"Price: ${item['price']}")
+        # Optional fields based on configuration
+        if 'price' in self.include_fields and (price := item_data.get('price')):
+            prompt_parts.append(f"price: {price}")
             
-        return "\n".join(prompt_parts)
-    
-    def get_embedding(self, text: str) -> np.ndarray:
-        """
-        Get embedding for a text string using the LLM
-        
-        Args:
-            text: Text to embed
+        if 'brand' in self.include_fields and (brand := item_data.get('brand')):
+            # Skip ASIN-like brands
+            if not (brand.startswith('B0') and len(brand) >= 10):
+                prompt_parts.append(f"brand: {brand}")
+                
+        if 'sales_rank' in self.include_fields and (rank := item_data.get('salesRank')):
+            prompt_parts.append(f"salesRank: {str(rank)}")
             
-        Returns:
-            Numpy array of embedding values
-        """
-        embeddings = self.model.get_embeddings([text])
-        return np.array(embeddings[0].values)
+        return TextEmbeddingInput(
+            task_type="RETRIEVAL_DOCUMENT",
+            title=item_data.get('title', ''),
+            text='\n'.join(prompt_parts)
+        )
 
-    def generate_item_embeddings(self, items: Dict[str, Dict]) -> Dict[str, np.ndarray]:
-        """
-        Generate embeddings for multiple items
-        
-        Args:
-            items: Dictionary mapping item IDs to their metadata
-            
-        Returns:
-            Dictionary mapping item IDs to their embeddings
-        """
+    def generate_item_embeddings(self, items: Dict) -> Dict[str, np.ndarray]:
+        """Generate embeddings with simplified prompts"""
         embeddings = {}
-        for item_id, item_data in items.items():
-            prompt = self.create_item_prompt(item_data)
-            embedding = self.get_embedding(prompt)
-            embeddings[item_id] = embedding
+        total_items = len(items)
+        batch_size = 5
+        
+        print(f"\nGenerating embeddings for {total_items} items...")
+        print(f"Including fields: {sorted(self.include_fields)}")
+        
+        # Process items in batches
+        item_list = list(items.items())
+        for batch_start in range(0, total_items, batch_size):
+            batch_end = min(batch_start + batch_size, total_items)
+            batch = item_list[batch_start:batch_end]
+            
+            if batch_start % 1000 == 0:
+                print(f"Processing items {batch_start}-{batch_end}/{total_items}")
+            
+            try:
+                embedding_inputs = [
+                    self.create_embedding_input(item_data)
+                    for _, item_data in batch
+                ]
+                
+                kwargs = {}
+                if self.output_dimension:
+                    kwargs['output_dimensionality'] = self.output_dimension
+                    
+                predictions = self.model.get_embeddings(embedding_inputs, **kwargs)
+                
+                for (item_id, _), embedding in zip(batch, predictions):
+                    embeddings[item_id] = np.array(embedding.values)
+                    
+                    if len(embeddings) == 1:
+                        print(f"Embedding dimension: {len(embedding.values)}")
+                
+            except Exception as e:
+                print(f"Error in batch {batch_start}-{batch_end}: {str(e)}")
+                continue
+        
         return embeddings
 
-# Example usage:
-def main():
-    # Example items (similar to Amazon product data used in the paper)
-    items = {
-        "B001": {
-            "title": "Professional Makeup Brush Set",
-            "description": "Set of 12 professional makeup brushes with synthetic bristles",
-            "categories": ["Beauty", "Makeup", "Brushes & Tools"],
-            "brand": "BeautyPro",
-            "salesRank": {"Beauty": 1250},
-            "price": 24.99
-        },
-        "B002": {
-            "title": "Eyeshadow Palette - Natural Colors",
-            "description": "15 highly pigmented natural eyeshadow colors",
-            "categories": ["Beauty", "Makeup", "Eyes", "Eyeshadow"],
-            "brand": "BeautyPro",
-            "salesRank": {"Beauty": 2100},
-            "price": 19.99
-        }
-    }
-    
-    # Generate embeddings
-    generator = ItemEmbeddingGenerator()
-    item_embeddings = generator.generate_item_embeddings(items)
-    
-    # Use with STAR retrieval
-    retrieval = STARRetrieval(semantic_weight=0.5, temporal_decay=0.7, history_length=3)
-    retrieval.compute_semantic_relationships(item_embeddings)
-    
-    # Example output of embeddings and similarity
-    print(f"Embedding dimension: {len(item_embeddings['B001'])}")
-    semantic_sim = retrieval.semantic_matrix[0,1]
-    print(f"Semantic similarity between items: {semantic_sim:.3f}")
+    def debug_prompt(self, items: Dict, num_samples: int = 3):
+        """Debug utility to verify prompt structure"""
+        print("\nSample prompts with current field selection:")
+        print("=" * 80)
+        print(f"Including fields: {sorted(self.include_fields)}")
+        print("=" * 80)
+        
+        for item_id in list(items.keys())[:num_samples]:
+            print(f"\nItem ID: {item_id}")
+            print("-" * 40)
+            embedding_input = self.create_embedding_input(items[item_id])
+            print("Title:", embedding_input.title)
+            print("\nText:", embedding_input.text)
+            print("=" * 80)
 
 if __name__ == "__main__":
-    main()
+    # Example usage
+    items = {
+        "item1": {"title": "Product 1", "description": "Description 1", "categories": ["Category 1", "Subcategory 1"]},
+        "item2": {"title": "Product 2", "description": "Description 2", "categories": ["Category 2", "Subcategory 2"]},
+        "item3": {"title": "Product 3", "description": "Description 3", "categories": ["Category 3", "Subcategory 3"]}
+    }
+    generator = ItemEmbeddingGenerator()
+    generator.debug_prompt(items, num_samples=3)
