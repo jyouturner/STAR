@@ -6,9 +6,11 @@
 README.md
 check_data.py
 download_data.py
+field_experiments.txt
 pyproject.toml
 src/collaborative_relationships.py
-src/data_processing.py
+src/data_debug.py
+src/data_quality.py
 src/evaluation_metrics.py
 src/item_embeddings_huggingface.py
 src/item_embeddings_vertex_ai.py
@@ -16,6 +18,7 @@ src/main.py
 src/model_analysis.py
 src/optimized_collaborative_relationships.py
 src/star_retrieval.py
+src/temporal_utils.py
 src/utils.py
 ```
 
@@ -491,6 +494,92 @@ if __name__ == "__main__":
     main()
 ```
 
+### field_experiments.txt
+
+```
+
+
+Fields: ['category', 'description', 'title']
+Metrics:
+hit@5: 0.3991
+hit@10: 0.4867
+ndcg@5: 0.3149
+ndcg@10: 0.3431
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.5885792527328697
+median_sim: 0.5843708517228574
+percentiles: [0.55343278 0.58437085 0.61844405]
+max_sim: 1.0
+min_nonzero: 0.3784515348345703
+
+
+Fields: ['brand', 'category', 'description', 'title']
+Metrics:
+hit@5: 0.4016
+hit@10: 0.4908
+ndcg@5: 0.3163
+ndcg@10: 0.3451
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.592085452183065
+median_sim: 0.58784833574214
+percentiles: [0.55710209 0.58784834 0.62173735]
+max_sim: 1.0
+min_nonzero: 0.3803194303167804
+
+
+Fields: ['category', 'description', 'price', 'title']
+Metrics:
+hit@5: 0.4022
+hit@10: 0.4883
+ndcg@5: 0.3159
+ndcg@10: 0.3436
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.6039595838697017
+median_sim: 0.600085251345748
+percentiles: [0.56923111 0.60008525 0.63376483]
+max_sim: 1.0
+min_nonzero: 0.39233099731798804
+
+
+Fields: ['category', 'description', 'sales_rank', 'title']
+Metrics:
+hit@5: 0.3971
+hit@10: 0.4877
+ndcg@5: 0.3132
+ndcg@10: 0.3425
+
+Semantic Statistics:
+sparsity: 8.267195767197588e-05
+mean_sim: 0.6077975172219833
+median_sim: 0.6038589289448102
+percentiles: [0.57286477 0.60385893 0.63780886]
+max_sim: 0.9999814416139519
+min_nonzero: 0.3841972122409252
+
+
+Fields: ['brand', 'category', 'description', 'price', 'sales_rank', 'title']
+Metrics:
+hit@5: 0.4009
+hit@10: 0.4872
+ndcg@5: 0.3158
+ndcg@10: 0.3436
+
+Semantic Statistics:
+sparsity: 8.26377985290172e-05
+mean_sim: 0.6173292723661657
+median_sim: 0.6136043211232933
+percentiles: [0.58322746 0.61360432 0.64668684]
+max_sim: 0.9999578744507863
+min_nonzero: 0.4015257656153163
+
+```
+
 ### pyproject.toml
 
 ```toml
@@ -678,213 +767,405 @@ if __name__ == "__main__":
     main()
 ```
 
-### src/data_processing.py
+### src/data_debug.py
 
 ```python
-import pandas as pd
-import json
-from datetime import datetime
-from typing import Dict, List, Tuple
-import faiss
+from collections import defaultdict, Counter
+import random
+from typing import List, Dict, Set, Tuple
 import numpy as np
-from scipy.sparse import csr_matrix
+from datetime import datetime
 
-class AmazonDataProcessor:
-    def __init__(self, min_interactions: int = 5):
-        self.min_interactions = min_interactions
-
-    def load_and_filter_data(self, file_path: str) -> pd.DataFrame:
-        """
-        Load and filter Amazon review data
-        """
-        # Load JSON data
-        data = []
-        with open(file_path, 'r') as f:
-            for line in f:
-                data.append(json.loads(line))
-        df = pd.DataFrame(data)
+class DataDebugger:
+    @staticmethod
+    def debug_print_user_history(reviews: List[Dict], num_users: int = 5):
+        """Print detailed history for random users"""
+        user_map = defaultdict(list)
+        for r in reviews:
+            user_map[r['reviewerID']].append(r)
         
-        # Convert timestamp
-        df['timestamp'] = pd.to_datetime(df['unixReviewTime'], unit='s')
+        # Get mix of high/medium/low activity users
+        user_counts = [(uid, len(reviews)) for uid, reviews in user_map.items()]
+        user_counts.sort(key=lambda x: x[1])
+        n = len(user_counts)
         
-        # Filter users and items with minimum interactions
-        user_counts = df['reviewerID'].value_counts()
-        item_counts = df['asin'].value_counts()
-        
-        valid_users = user_counts[user_counts >= self.min_interactions].index
-        valid_items = item_counts[item_counts >= self.min_interactions].index
-        
-        df = df[
-            df['reviewerID'].isin(valid_users) &
-            df['asin'].isin(valid_items)
-        ]
-        
-        return df.sort_values('timestamp')
-
-    def create_chronological_split(
-        self, 
-        df: pd.DataFrame
-    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """
-        Split data chronologically for each user
-        """
-        train_data = []
-        val_data = []
-        test_data = []
-        
-        for user, group in df.groupby('reviewerID'):
-            user_hist = group.sort_values('timestamp')
-            
-            if len(user_hist) >= 3:  # Need at least 3 interactions
-                train_data.extend(user_hist.iloc[:-2].to_dict('records'))
-                val_data.append(user_hist.iloc[-2])
-                test_data.append(user_hist.iloc[-1])
-        
-        return (
-            pd.DataFrame(train_data),
-            pd.DataFrame(val_data),
-            pd.DataFrame(test_data)
-        )
-
-class EfficientRetrieval:
-    def __init__(self, dimension: int):
-        """
-        Initialize FAISS index for efficient similarity search
-        """
-        self.index = faiss.IndexFlatIP(dimension)  # Inner product similarity
-        self.item_ids = []
-        
-    def add_items(self, item_embeddings: Dict[str, np.ndarray]):
-        """
-        Add item embeddings to the index
-        """
-        embeddings = []
-        self.item_ids = []
-        
-        for item_id, embedding in item_embeddings.items():
-            # Normalize for cosine similarity
-            normalized_embedding = embedding / np.linalg.norm(embedding)
-            embeddings.append(normalized_embedding)
-            self.item_ids.append(item_id)
-            
-        embeddings_matrix = np.vstack(embeddings)
-        self.index.add(embeddings_matrix)
-        
-    def find_similar_items(self, query_embedding: np.ndarray, k: int) -> List[Tuple[str, float]]:
-        """
-        Find k most similar items using FAISS
-        """
-        # Normalize query
-        query_embedding = query_embedding / np.linalg.norm(query_embedding)
-        
-        # Search
-        similarities, indices = self.index.search(
-            query_embedding.reshape(1, -1), 
-            k
+        selected_users = (
+            # Low activity
+            [uid for uid, _ in user_counts[:n//3]][0:num_users//3] +
+            # Medium activity
+            [uid for uid, _ in user_counts[n//3:2*n//3]][0:num_users//3] +
+            # High activity
+            [uid for uid, _ in user_counts[2*n//3:]][0:num_users//3]
         )
         
-        # Return (item_id, similarity) pairs
-        results = []
-        for sim, idx in zip(similarities[0], indices[0]):
-            if idx != -1:  # FAISS returns -1 for padding if fewer than k results
-                results.append((self.item_ids[idx], float(sim)))
+        print("\n=== Sample User Histories ===")
+        for user_id in selected_users:
+            user_reviews = sorted(user_map[user_id], key=lambda x: x['unixReviewTime'])
+            print(f"\nUser: {user_id} ({len(user_reviews)} reviews)")
+            prev_time = None
+            for rv in user_reviews:
+                time = rv['unixReviewTime']
+                time_str = datetime.fromtimestamp(time).strftime('%Y-%m-%d')
                 
-        return results
+                # Check if timestamps are in order
+                if prev_time and time < prev_time:
+                    print("  ⚠️ OUT OF ORDER!")
+                prev_time = time
+                
+                print(f"  {time_str}: {rv['asin']}, rating={rv['overall']}")
+                if 'summary' in rv:
+                    print(f"    Summary: {rv['summary'][:100]}...")
 
-class SparseCollaborativeProcessor:
-    def __init__(self):
-        self.user_to_idx = {}
-        self.item_to_idx = {}
-        self.interaction_matrix = None
+    @staticmethod
+    def check_for_duplicates(reviews: List[Dict]) -> Tuple[int, List[Tuple]]:
+        """Check for exact and partial duplicates"""
+        # Exact duplicates (user, item, time)
+        exact_seen = set()
+        exact_dupes = []
         
-    def process_interactions(self, interactions: List[Tuple[str, str, float, str]]):
-        """
-        Process interactions using sparse matrices
-        """
-        # Create mappings
-        users = sorted(set(u for u, _, _, _ in interactions))
-        items = sorted(set(i for _, i, _, _ in interactions))
+        # Partial duplicates (user, item)
+        partial_seen = defaultdict(list)
+        partial_dupes = []
         
-        self.user_to_idx = {u: i for i, u in enumerate(users)}
-        self.item_to_idx = {i: j for j, i in enumerate(items)}
-        
-        # Create sparse matrix
-        rows = []
-        cols = []
-        data = []
-        
-        for user_id, item_id, _, _ in interactions:
-            rows.append(self.user_to_idx[user_id])
-            cols.append(self.item_to_idx[item_id])
-            data.append(1.0)
+        for r in reviews:
+            # Check exact duplicates
+            exact_key = (r['reviewerID'], r['asin'], r['unixReviewTime'])
+            if exact_key in exact_seen:
+                exact_dupes.append(exact_key)
+            else:
+                exact_seen.add(exact_key)
             
-        self.interaction_matrix = csr_matrix(
-            (data, (rows, cols)),
-            shape=(len(users), len(items))
-        )
+            # Check partial duplicates
+            partial_key = (r['reviewerID'], r['asin'])
+            if partial_key in partial_seen:
+                partial_dupes.append((partial_key, r['unixReviewTime']))
+            partial_seen[partial_key].append(r['unixReviewTime'])
         
-    def compute_similarities(self, item_id: str, k: int) -> List[Tuple[str, float]]:
-        """
-        Compute top-k similar items based on collaborative patterns
-        """
-        if item_id not in self.item_to_idx:
-            return []
+        print("\n=== Duplicate Analysis ===")
+        print(f"Total reviews: {len(reviews)}")
+        print(f"Exact duplicates: {len(exact_dupes)}")
+        print(f"Users with multiple reviews for same item: {len(partial_dupes)}")
+        
+        if exact_dupes:
+            print("\nSample exact duplicates:")
+            for dupe in exact_dupes[:3]:
+                print(f"  User {dupe[0]}, Item {dupe[1]}, Time {dupe[2]}")
+                
+        return len(exact_dupes), exact_dupes
+
+    @staticmethod
+    def analyze_ratings(reviews: List[Dict]):
+        """Analyze rating distribution and patterns"""
+        rating_counts = Counter(r['overall'] for r in reviews)
+        user_rating_counts = defaultdict(Counter)
+        
+        for r in reviews:
+            user_rating_counts[r['reviewerID']][r['overall']] += 1
+        
+        print("\n=== Rating Analysis ===")
+        print("Overall rating distribution:")
+        total = sum(rating_counts.values())
+        for rating in sorted(rating_counts.keys()):
+            count = rating_counts[rating]
+            print(f"  {rating}: {count} ({count/total*100:.1f}%)")
             
-        item_idx = self.item_to_idx[item_id]
-        item_vector = self.interaction_matrix.T[item_idx]
+        # Check for users with unusual patterns
+        unusual_users = []
+        for user_id, counts in user_rating_counts.items():
+            if len(counts) == 1:  # User gives same rating always
+                unusual_users.append((user_id, list(counts.keys())[0]))
+                
+        if unusual_users:
+            print("\nUsers with single rating value:")
+            for user_id, rating in unusual_users[:5]:
+                print(f"  User {user_id}: all {rating}s ({user_rating_counts[user_id][rating]} reviews)")
+
+    @staticmethod
+    def verify_evaluation_splits(
+        test_sequences: List[Tuple],
+        reviews: List[Dict]
+    ):
+        """Verify test sequences are properly created"""
+        print("\n=== Evaluation Split Verification ===")
         
-        # Compute similarities using sparse operations
-        similarities = self.interaction_matrix.T.dot(item_vector.T)
-        similarities = similarities.toarray().flatten()
+        # Build user timeline
+        user_reviews = defaultdict(list)
+        for r in reviews:
+            user_reviews[r['reviewerID']].append((r['asin'], r['unixReviewTime']))
+            
+        # Check each test sequence
+        issues = 0
+        for user_id, history, next_item in test_sequences:
+            # Get user's reviews sorted by time
+            timeline = sorted(user_reviews[user_id], key=lambda x: x[1])
+            
+            # Verify next_item is truly last
+            if timeline[-1][0] != next_item:
+                issues += 1
+                print(f"\nIssue with user {user_id}:")
+                print(f"  Test item: {next_item}")
+                print(f"  Actually last: {timeline[-1][0]}")
+                if issues >= 5:  # Show first 5 issues only
+                    break
+                    
+        print(f"\nFound {issues} sequences where test item isn't truly last")
         
-        # Get top-k items
-        top_k_idx = np.argsort(similarities)[-k:][::-1]
+        # Verify history lengths
+        history_lengths = Counter(len(h) for _, h, _ in test_sequences)
+        print("\nHistory length distribution:")
+        for length in sorted(history_lengths.keys()):
+            count = history_lengths[length]
+            print(f"  Length {length}: {count} sequences")
+
+    @staticmethod
+    def debug_negative_sampling(
+        test_sequences: List[Tuple],
+        recommender,
+        user_all_items: Dict[str, Set[str]],
+        n_checks: int = 5
+    ):
+        """Verify negative sampling process"""
+        print("\n=== Negative Sampling Debug ===")
         
-        # Convert back to item IDs
-        idx_to_item = {idx: item for item, idx in self.item_to_idx.items()}
+        seq_sample = random.sample(test_sequences, min(n_checks, len(test_sequences)))
+        for user_id, history, next_item in seq_sample:
+            # Get excluded items
+            excluded = user_all_items.get(user_id, set(history) | {next_item})
+            
+            # Sample negatives
+            valid_items = set(recommender.item_to_idx.keys())
+            negatives = valid_items - excluded
+            
+            print(f"\nUser: {user_id}")
+            print(f"History length: {len(history)}")
+            print(f"Total valid items: {len(valid_items)}")
+            print(f"Excluded items: {len(excluded)}")
+            print(f"Available negatives: {len(negatives)}")
+            
+            if len(negatives) < 99:
+                print("⚠️ WARNING: Less than 99 possible negative samples!")
+
+    @staticmethod
+    def analyze_collaborative_matrix(matrix: np.ndarray):
+        """Analyze collaborative relationship matrix"""
+        print("\n=== Collaborative Matrix Analysis ===")
         
-        return [
-            (idx_to_item[idx], float(similarities[idx]))
-            for idx in top_k_idx
-            if idx != item_idx and similarities[idx] > 0
+        # Basic statistics
+        nonzero = matrix[matrix > 0]
+        print(f"Shape: {matrix.shape}")
+        print(f"Density: {len(nonzero)/(matrix.shape[0]*matrix.shape[1]):.4f}")
+        print(f"Mean nonzero value: {nonzero.mean():.4f}")
+        print(f"Max value: {matrix.max():.4f}")
+        
+        # Check diagonal
+        diag = np.diag(matrix)
+        if np.any(diag != 0):
+            print("⚠️ WARNING: Non-zero diagonal elements found!")
+            print(f"Non-zero diagonals: {np.count_nonzero(diag)}")
+            
+        # Distribution of values
+        percentiles = np.percentile(nonzero, [25, 50, 75])
+        print("\nValue distribution (nonzero):")
+        print(f"  25th percentile: {percentiles[0]:.4f}")
+        print(f"  Median: {percentiles[1]:.4f}")
+        print(f"  75th percentile: {percentiles[2]:.4f}")
+
+```
+
+### src/data_quality.py
+
+```python
+from collections import defaultdict
+from typing import Dict, List, Tuple
+import re
+
+class DataQualityChecker:
+    def __init__(self, min_description_length: int = 100,
+                 min_title_length: int = 10,
+                 required_fields: List[str] = None):
+        """
+        Initialize data quality checker
+        
+        Args:
+            min_description_length: Minimum characters in description
+            min_title_length: Minimum characters in title
+            required_fields: List of required metadata fields
+        """
+        self.min_description_length = min_description_length
+        self.min_title_length = min_title_length
+        self.required_fields = required_fields or ['title', 'description', 'categories', 'brand', 'price']
+
+    def check_text_quality(self, text: str) -> Tuple[bool, List[str]]:
+        """Check if text has sufficient information content"""
+        issues = []
+        
+        if not text:
+            return False, ["Empty text"]
+            
+        # Check if text is just placeholder content
+        placeholder_patterns = [
+            r'n/a', r'not available', r'no description',
+            r'^\s*$',  # only whitespace
+            r'^\W+$'   # only special characters
         ]
+        
+        for pattern in placeholder_patterns:
+            if re.search(pattern, text.lower()):
+                issues.append(f"Contains placeholder content: {pattern}")
+                
+        # Check for very repetitive content
+        words = text.lower().split()
+        if words:
+            unique_ratio = len(set(words)) / len(words)
+            if unique_ratio < 0.3:  # Less than 30% unique words
+                issues.append("Text is highly repetitive")
+                
+        return len(issues) == 0, issues
 
-# Example usage
-def main():
-    # Initialize processors
-    data_processor = AmazonDataProcessor(min_interactions=5)
-    efficient_retrieval = EfficientRetrieval(dimension=768)  # For text-embedding-gecko
-    sparse_collab = SparseCollaborativeProcessor()
+    def check_item_metadata(self, item_data: Dict) -> Tuple[bool, Dict[str, List[str]]]:
+        """
+        Check if item has sufficient metadata quality
+        
+        Returns:
+            Tuple of (passed_check, issues_dict)
+        """
+        issues = {}
+        
+        # Check required fields presence
+        for field in self.required_fields:
+            if field not in item_data or not item_data[field]:
+                issues[field] = [f"Missing {field}"]
+                
+        # Check title quality
+        if 'title' in item_data:
+            title = str(item_data['title'])
+            if len(title) < self.min_title_length:
+                issues['title'] = [f"Title too short ({len(title)} chars)"]
+            title_quality, title_issues = self.check_text_quality(title)
+            if not title_quality:
+                issues.setdefault('title', []).extend(title_issues)
+                
+        # Check description quality
+        if 'description' in item_data:
+            desc = str(item_data['description'])
+            if len(desc) < self.min_description_length:
+                issues['description'] = [f"Description too short ({len(desc)} chars)"]
+            desc_quality, desc_issues = self.check_text_quality(desc)
+            if not desc_quality:
+                issues.setdefault('description', []).extend(desc_issues)
+                
+        # Check categories
+        if 'categories' in item_data:
+            cats = item_data['categories']
+            if not cats or (isinstance(cats, list) and not cats[0]):
+                issues['categories'] = ["Empty categories"]
+            elif isinstance(cats[0], list) and len(cats[0]) < 2:
+                issues['categories'] = ["Insufficient category hierarchy depth"]
+                
+        # Check numerical fields
+        if 'price' in item_data:
+            try:
+                price = float(item_data['price'])
+                if price <= 0:
+                    issues['price'] = ["Invalid price value"]
+            except (ValueError, TypeError):
+                issues['price'] = ["Price not a valid number"]
+                
+        # Check sales rank if present
+        if 'salesRank' in item_data:
+            if not isinstance(item_data['salesRank'], dict):
+                issues['salesRank'] = ["Sales rank not in proper format"]
+                
+        return len(issues) == 0, issues
+
+    def filter_items(self, items: Dict) -> Tuple[Dict, Dict[str, Dict[str, List[str]]]]:
+        """
+        Filter items based on metadata quality
+        
+        Returns:
+            Tuple of (filtered_items, rejected_items_with_reasons)
+        """
+        filtered_items = {}
+        rejected_items = {}
+        
+        print("\nChecking data quality for items...")
+        total_items = len(items)
+        
+        for idx, (item_id, item_data) in enumerate(items.items()):
+            if idx % 1000 == 0:
+                print(f"Checking item {idx}/{total_items}")
+                
+            passed, issues = self.check_item_metadata(item_data)
+            
+            if passed:
+                filtered_items[item_id] = item_data
+            else:
+                rejected_items[item_id] = issues
+        
+        print(f"\nData quality check complete:")
+        print(f"Passed: {len(filtered_items)} items")
+        print(f"Rejected: {len(rejected_items)} items")
+        
+        # Print sample rejection reasons
+        if rejected_items:
+            print("\nSample rejection reasons:")
+            for item_id, issues in list(rejected_items.items())[:3]:
+                print(f"\nItem {item_id}:")
+                for field, field_issues in issues.items():
+                    print(f"  {field}: {', '.join(field_issues)}")
+        
+        return filtered_items, rejected_items
+
+def verify_item_coverage(items: Dict) -> Dict[str, float]:
+    """Analyze metadata coverage across items"""
+    total_items = len(items)
+    if total_items == 0:
+        return {}
+        
+    coverage = {}
+    field_lengths = defaultdict(list)
     
-    # Load and process data
-    df = data_processor.load_and_filter_data('path/to/amazon_reviews.json')
-    train_df, val_df, test_df = data_processor.create_chronological_split(df)
+    # Check all possible fields
+    all_fields = set()
+    for item_data in items.values():
+        all_fields.update(item_data.keys())
     
-    # Process items for efficient retrieval
-    item_embeddings = {}  # Get these from ItemEmbeddingGenerator
-    efficient_retrieval.add_items(item_embeddings)
+    # Calculate coverage for each field
+    for field in all_fields:
+        present_count = sum(1 for item in items.values() if field in item and item[field])
+        coverage[f"{field}_present"] = present_count / total_items
+        
+        # Calculate length statistics for text fields
+        if field in ['title', 'description']:
+            lengths = [len(str(item[field])) for item in items.values() 
+                      if field in item and item[field]]
+            if lengths:
+                coverage[f"{field}_avg_length"] = sum(lengths) / len(lengths)
+                coverage[f"{field}_min_length"] = min(lengths)
+                coverage[f"{field}_max_length"] = max(lengths)
     
-    # Process collaborative information
-    interactions = [
-        (row['reviewerID'], row['asin'], row['timestamp'], row['overall'])
-        for _, row in train_df.iterrows()
-    ]
-    sparse_collab.process_interactions(interactions)
-    
-    print("Data processing and initialization complete")
-    
-if __name__ == "__main__":
-    main()
+    return coverage
+
 ```
 
 ### src/evaluation_metrics.py
 
 ```python
-import numpy as np
-from typing import Any, List, Dict, Tuple
 from collections import defaultdict
+from typing import Dict, List, Tuple
 import random
 from tqdm import tqdm
+import numpy as np
+
+def build_user_all_items(interactions: List[Tuple]) -> Dict[str, set]:
+    """
+    Build a dictionary mapping user_id -> set of all item_ids 
+    that user has interacted with (at any time).
+    """
+    user_all_items = defaultdict(set)
+    for user_id, item_id, timestamp, rating in interactions:
+        user_all_items[user_id].add(item_id)
+    return user_all_items
 
 class RecommendationEvaluator:
     def __init__(self):
@@ -905,17 +1186,19 @@ class RecommendationEvaluator:
             return 0.0
         
         rank = recommended_items[:k].index(ground_truth)
-        return 1.0 / np.log2(rank + 2)  # +2 because index starts at 0
+        return 1.0 / np.log2(rank + 2)
 
     def evaluate_recommendations(
         self,
-        test_sequences,
+        test_sequences: List[Tuple],
         recommender,
         k_values: List[int],
-        n_negative_samples: int = 99  # Paper uses 99 negative samples
+        n_negative_samples: int = 99,  # Paper uses 99 negative samples
+        user_all_items: Dict[str, set] = None  # NEW: Dictionary of all items per user
     ) -> Dict[str, float]:
         """
-        Evaluate recommendations using the paper's protocol
+        Evaluate recommendations using the paper's protocol with proper negative sampling
+        that excludes all items a user has interacted with at any point in time
         """
         print("\n=== Starting Evaluation ===")
         metrics = {f"hit@{k}": 0.0 for k in k_values}
@@ -940,23 +1223,28 @@ class RecommendationEvaluator:
             valid_history = [item for item in history if item in recommender.item_to_idx]
             if not valid_history:
                 continue
+
+            # NEW: Build set of items to exclude from negative sampling
+            if user_all_items is not None and user_id in user_all_items:
+                # Exclude any item the user has interacted with (past OR future)
+                excluded_items = set(user_all_items[user_id])
+            else:
+                # Fallback to old logic if user_all_items not provided
+                excluded_items = set(history) | {next_item}
             
-            # Sample negative items (excluding history and next item)
+            # Sample negative items (excluding all user interactions)
             negative_candidates = set()
-            excluded_items = set(history) | {next_item}
-            
-            # Sample exactly n_negative_samples items
             while len(negative_candidates) < n_negative_samples:
                 item = random.choice(valid_items)
                 if item not in excluded_items:
                     negative_candidates.add(item)
             
             # Create candidate set with negative samples + positive item
-            candidate_items = list(negative_candidates) + [next_item]  # Critical: Add positive item last
+            candidate_items = list(negative_candidates) + [next_item]
             
             # Get recommendations
             recommendations = recommender.score_candidates(
-                user_history=valid_history[-recommender.history_length:],  # Use last l items
+                user_history=valid_history[-recommender.history_length:],
                 ratings=[1.0] * len(valid_history),  # As per paper, ignore ratings
                 candidate_items=candidate_items,
                 top_k=max(k_values)
@@ -984,40 +1272,48 @@ class RecommendationEvaluator:
         return metrics
 
 
-def prepare_evaluation_data(interactions, min_sequence_length=5):
+def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int = 5) -> List[Tuple]:
     """
     Prepare evaluation data following paper's protocol:
-    - Maintain temporal ordering
-    - Minimum sequence length of 5
-    - Use last item as test item
-    - Use previous items as history
+    - Maintain strict temporal ordering
+    - Use chronologically last item as test item
+    - Previous items as history
+    - Minimum sequence length requirement
     
     Args:
         interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length (default: 5)
+        min_sequence_length: Minimum required sequence length
         
     Returns:
         List of (user_id, history, test_item) tuples
     """
-    # Sort all interactions by user and timestamp
-    sorted_interactions = sorted(interactions, key=lambda x: (x[0], x[2]))
-    
-    # Group by user while maintaining temporal order
-    user_sequences = {}
-    for user_id, item_id, timestamp, rating in sorted_interactions:
-        if user_id not in user_sequences:
-            user_sequences[user_id] = []
+    # Group interactions by user while maintaining temporal order
+    user_sequences = defaultdict(list)
+    for user_id, item_id, timestamp, rating in interactions:
         user_sequences[user_id].append((item_id, timestamp, rating))
     
     test_sequences = []
+    skipped_users = 0
+    timestamp_issues = 0
     
     for user_id, interactions in user_sequences.items():
+        # Sort user's interactions by timestamp
+        sorted_items = sorted(interactions, key=lambda x: x[1])
+        
         # Skip if sequence is too short
-        if len(interactions) < min_sequence_length:
+        if len(sorted_items) < min_sequence_length:
+            skipped_users += 1
             continue
         
-        # Get items in temporal order
-        items = [item for item, _, _ in interactions]
+        # Check for duplicate timestamps
+        timestamps = [t for _, t, _ in sorted_items]
+        if len(set(timestamps)) != len(timestamps):
+            timestamp_issues += 1
+            # For items with same timestamp, keep order as is
+            # This matches paper's handling of same-timestamp reviews
+        
+        # Extract items in temporal order
+        items = [item for item, _, _ in sorted_items]
         
         # Last item is test item
         test_item = items[-1]
@@ -1026,45 +1322,56 @@ def prepare_evaluation_data(interactions, min_sequence_length=5):
         
         test_sequences.append((user_id, history, test_item))
     
+    print(f"\nEvaluation data preparation:")
+    print(f"Total users processed: {len(user_sequences)}")
+    print(f"Users skipped (too short): {skipped_users}")
+    print(f"Users with timestamp issues: {timestamp_issues}")
+    print(f"Final test sequences: {len(test_sequences)}")
+    
     return test_sequences
 
-def prepare_validation_data(interactions, min_sequence_length=5):
+def prepare_validation_data(interactions: List[Tuple], min_sequence_length: int = 5) -> List[Tuple]:
     """
     Prepare validation data similar to test data but using second-to-last item
     
     Args:
         interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length (default: 5)
+        min_sequence_length: Minimum required sequence length
         
     Returns:
         List of (user_id, history, validation_item) tuples
     """
-    # Sort all interactions by user and timestamp
-    sorted_interactions = sorted(interactions, key=lambda x: (x[0], x[2]))
-    
-    # Group by user while maintaining temporal order
-    user_sequences = {}
-    for user_id, item_id, timestamp, rating in sorted_interactions:
-        if user_id not in user_sequences:
-            user_sequences[user_id] = []
+    # Group and sort by user and timestamp
+    user_sequences = defaultdict(list)
+    for user_id, item_id, timestamp, rating in interactions:
         user_sequences[user_id].append((item_id, timestamp, rating))
     
     validation_sequences = []
+    skipped_users = 0
     
     for user_id, interactions in user_sequences.items():
+        # Sort user's interactions by timestamp
+        sorted_items = sorted(interactions, key=lambda x: x[1])
+        
         # Skip if sequence is too short
-        if len(interactions) < min_sequence_length:
+        if len(sorted_items) < min_sequence_length:
+            skipped_users += 1
             continue
         
-        # Get items in temporal order
-        items = [item for item, _, _ in interactions]
+        # Extract items in temporal order
+        items = [item for item, _, _ in sorted_items]
         
         # Second-to-last item is validation item
         validation_item = items[-2]
-        # Previous items are history
+        # Previous items are history (excluding last and validation items)
         history = items[:-2]
         
         validation_sequences.append((user_id, history, validation_item))
+    
+    print(f"\nValidation data preparation:")
+    print(f"Total users processed: {len(user_sequences)}")
+    print(f"Users skipped (too short): {skipped_users}")
+    print(f"Final validation sequences: {len(validation_sequences)}")
     
     return validation_sequences
 ```
@@ -1194,147 +1501,156 @@ if __name__ == "__main__":
 ### src/item_embeddings_vertex_ai.py
 
 ```python
-from typing import Dict, Any
+from vertexai.preview.language_models import TextEmbeddingModel
+from vertexai.language_models import TextEmbeddingInput
+from typing import Dict, List, Set
 import numpy as np
-import json
-from star_retrieval import STARRetrieval
-from vertexai.language_models import TextEmbeddingModel  # for Google's text-embedding-gecko
 
 class ItemEmbeddingGenerator:
-    def __init__(self):
-        """Initialize the embedding model"""
-        self.model = TextEmbeddingModel.from_pretrained("textembedding-gecko@latest")
-        
-    def create_item_prompt(self, item: Dict[str, Any]) -> str:
+    def __init__(self, 
+                output_dimension: int = 768,
+                include_fields: Set[str] = None):
         """
-        Create a text prompt for an item following the paper's approach.
-        The paper mentions using title, description, category, brand, sales rank, and price,
-        but omitting ID and URL fields.
+        Initialize generator with configurable fields
         
         Args:
-            item: Dictionary containing item metadata
-            
-        Returns:
-            Formatted text prompt for the item
+            output_dimension: Embedding dimension (default matches paper)
+            include_fields: Set of fields to include in prompt
+                          (title, description, category, brand, price, sales_rank)
         """
+        self.model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+        self.output_dimension = output_dimension
+        # Default to minimal set of fields if none specified
+        self.include_fields = include_fields or {'title', 'description', 'category'}
+        
+    def create_embedding_input(self, item_data: Dict) -> TextEmbeddingInput:
+        """Create simplified prompt following paper's structure"""
         prompt_parts = []
         
-        # Add title
-        if 'title' in item:
-            prompt_parts.append(f"Title: {item['title']}")
+        # Handle description first
+        if 'description' in self.include_fields:
+            desc = str(item_data.get('description', '')).strip()
+            if desc:
+                prompt_parts.append("description:")
+                prompt_parts.append(desc)
+        
+        # Add basic fields with minimal formatting
+        if 'title' in self.include_fields and (title := item_data.get('title')):
+            prompt_parts.append(f"title: {title}")
             
-        # Add description
-        if 'description' in item:
-            prompt_parts.append(f"Description: {item['description']}")
-            
-        # Add categories
-        if 'categories' in item:
-            if isinstance(item['categories'], list):
-                cats = ' > '.join(item['categories'])
+        if 'category' in self.include_fields and (cats := item_data.get('categories')):
+            if isinstance(cats[0], list):
+                category_str = " > ".join(cats[0])
             else:
-                cats = str(item['categories'])
-            prompt_parts.append(f"Categories: {cats}")
-            
-        # Add brand
-        if 'brand' in item:
-            prompt_parts.append(f"Brand: {item['brand']}")
-            
-        # Add sales rank
-        if 'salesRank' in item:
-            if isinstance(item['salesRank'], dict):
-                # Handle case where salesRank is category-specific
-                ranks = [f"{cat}: {rank}" for cat, rank in item['salesRank'].items()]
-                prompt_parts.append(f"Sales Rank: {', '.join(ranks)}")
-            else:
-                prompt_parts.append(f"Sales Rank: {item['salesRank']}")
+                category_str = " > ".join(cats)
+            if category_str:
+                prompt_parts.append(f"category: {category_str}")
                 
-        # Add price
-        if 'price' in item:
-            prompt_parts.append(f"Price: ${item['price']}")
+        # Optional fields based on configuration
+        if 'price' in self.include_fields and (price := item_data.get('price')):
+            prompt_parts.append(f"price: {price}")
             
-        return "\n".join(prompt_parts)
-    
-    def get_embedding(self, text: str) -> np.ndarray:
-        """
-        Get embedding for a text string using the LLM
-        
-        Args:
-            text: Text to embed
+        if 'brand' in self.include_fields and (brand := item_data.get('brand')):
+            # Skip ASIN-like brands
+            if not (brand.startswith('B0') and len(brand) >= 10):
+                prompt_parts.append(f"brand: {brand}")
+                
+        if 'sales_rank' in self.include_fields and (rank := item_data.get('salesRank')):
+            prompt_parts.append(f"salesRank: {str(rank)}")
             
-        Returns:
-            Numpy array of embedding values
-        """
-        embeddings = self.model.get_embeddings([text])
-        return np.array(embeddings[0].values)
+        return TextEmbeddingInput(
+            task_type="RETRIEVAL_DOCUMENT",
+            title=item_data.get('title', ''),
+            text='\n'.join(prompt_parts)
+        )
 
-    def generate_item_embeddings(self, items: Dict[str, Dict]) -> Dict[str, np.ndarray]:
-        """
-        Generate embeddings for multiple items
-        
-        Args:
-            items: Dictionary mapping item IDs to their metadata
-            
-        Returns:
-            Dictionary mapping item IDs to their embeddings
-        """
+    def generate_item_embeddings(self, items: Dict) -> Dict[str, np.ndarray]:
+        """Generate embeddings with simplified prompts"""
         embeddings = {}
-        for item_id, item_data in items.items():
-            prompt = self.create_item_prompt(item_data)
-            embedding = self.get_embedding(prompt)
-            embeddings[item_id] = embedding
+        total_items = len(items)
+        batch_size = 5
+        
+        print(f"\nGenerating embeddings for {total_items} items...")
+        print(f"Including fields: {sorted(self.include_fields)}")
+        
+        # Process items in batches
+        item_list = list(items.items())
+        for batch_start in range(0, total_items, batch_size):
+            batch_end = min(batch_start + batch_size, total_items)
+            batch = item_list[batch_start:batch_end]
+            
+            if batch_start % 1000 == 0:
+                print(f"Processing items {batch_start}-{batch_end}/{total_items}")
+            
+            try:
+                embedding_inputs = [
+                    self.create_embedding_input(item_data)
+                    for _, item_data in batch
+                ]
+                
+                kwargs = {}
+                if self.output_dimension:
+                    kwargs['output_dimensionality'] = self.output_dimension
+                    
+                predictions = self.model.get_embeddings(embedding_inputs, **kwargs)
+                
+                for (item_id, _), embedding in zip(batch, predictions):
+                    embeddings[item_id] = np.array(embedding.values)
+                    
+                    if len(embeddings) == 1:
+                        print(f"Embedding dimension: {len(embedding.values)}")
+                
+            except Exception as e:
+                print(f"Error in batch {batch_start}-{batch_end}: {str(e)}")
+                continue
+        
         return embeddings
 
-# Example usage:
-def main():
-    # Example items (similar to Amazon product data used in the paper)
-    items = {
-        "B001": {
-            "title": "Professional Makeup Brush Set",
-            "description": "Set of 12 professional makeup brushes with synthetic bristles",
-            "categories": ["Beauty", "Makeup", "Brushes & Tools"],
-            "brand": "BeautyPro",
-            "salesRank": {"Beauty": 1250},
-            "price": 24.99
-        },
-        "B002": {
-            "title": "Eyeshadow Palette - Natural Colors",
-            "description": "15 highly pigmented natural eyeshadow colors",
-            "categories": ["Beauty", "Makeup", "Eyes", "Eyeshadow"],
-            "brand": "BeautyPro",
-            "salesRank": {"Beauty": 2100},
-            "price": 19.99
-        }
-    }
-    
-    # Generate embeddings
-    generator = ItemEmbeddingGenerator()
-    item_embeddings = generator.generate_item_embeddings(items)
-    
-    # Use with STAR retrieval
-    retrieval = STARRetrieval(semantic_weight=0.5, temporal_decay=0.7, history_length=3)
-    retrieval.compute_semantic_relationships(item_embeddings)
-    
-    # Example output of embeddings and similarity
-    print(f"Embedding dimension: {len(item_embeddings['B001'])}")
-    semantic_sim = retrieval.semantic_matrix[0,1]
-    print(f"Semantic similarity between items: {semantic_sim:.3f}")
+    def debug_prompt(self, items: Dict, num_samples: int = 3):
+        """Debug utility to verify prompt structure"""
+        print("\nSample prompts with current field selection:")
+        print("=" * 80)
+        print(f"Including fields: {sorted(self.include_fields)}")
+        print("=" * 80)
+        
+        for item_id in list(items.keys())[:num_samples]:
+            print(f"\nItem ID: {item_id}")
+            print("-" * 40)
+            embedding_input = self.create_embedding_input(items[item_id])
+            print("Title:", embedding_input.title)
+            print("\nText:", embedding_input.text)
+            print("=" * 80)
 
 if __name__ == "__main__":
-    main()
+    # Example usage
+    items = {
+        "item1": {"title": "Product 1", "description": "Description 1", "categories": ["Category 1", "Subcategory 1"]},
+        "item2": {"title": "Product 2", "description": "Description 2", "categories": ["Category 2", "Subcategory 2"]},
+        "item3": {"title": "Product 3", "description": "Description 3", "categories": ["Category 3", "Subcategory 3"]}
+    }
+    generator = ItemEmbeddingGenerator()
+    generator.debug_prompt(items, num_samples=3)
+
 ```
 
 ### src/main.py
 
 ```python
+from ast import Dict, Set
 import os
+from typing import List, Dict, Set
 import numpy as np
 from pathlib import Path
-from item_embeddings_huggingface import ItemEmbeddingGenerator
+#from item_embeddings_huggingface import ItemEmbeddingGenerator
+from item_embeddings_vertex_ai import ItemEmbeddingGenerator
 from star_retrieval import STARRetrieval
 from collaborative_relationships import CollaborativeRelationshipProcessor
-from evaluation_metrics import RecommendationEvaluator, prepare_evaluation_data, prepare_validation_data
-from model_analysis import run_full_analysis
-
+from evaluation_metrics import RecommendationEvaluator, prepare_evaluation_data, prepare_validation_data, build_user_all_items
+from model_analysis import analyze_semantic_matrix, run_full_analysis
+from utils import load_amazon_dataset, load_amazon_metadata, get_items_from_data, get_training_interactions, print_metrics_table
+from data_quality import DataQualityChecker, verify_item_coverage
+from data_debug import DataDebugger
+from temporal_utils import TemporalProcessor
 from utils import (
     load_amazon_dataset,
     load_amazon_metadata,
@@ -1369,89 +1685,96 @@ def main():
     # Load data
     print("Loading data...")
     reviews = load_amazon_dataset("beauty", min_interactions=5)
-    metadata = load_amazon_metadata("beauty", min_interactions=5)
-
-    # Process items and embeddings
-    print("Processing items and generating embeddings...")
-    items = get_items_from_data(reviews, metadata)
     
-    # Try loading saved embeddings first
+    # Initialize temporal processor
+    temporal_processor = TemporalProcessor()
+    
+    # Check chronological ordering
+    temporal_processor.print_chronology_check(reviews)
+    
+    # Sort reviews chronologically
+    reviews = temporal_processor.sort_reviews_chronologically(reviews)
+    metadata = load_amazon_metadata("beauty", min_interactions=5)
+    
+    # Initialize debugger
+    debugger = DataDebugger()
+    
+    # 1. Check user histories
+    debugger.debug_print_user_history(reviews)
+    
+    # 2. Check for duplicates
+    debugger.check_for_duplicates(reviews)
+    
+    # 3. Analyze ratings
+    debugger.analyze_ratings(reviews)
+    
+    # Process items and prepare data
+    items = get_items_from_data(reviews, metadata)
     embeddings, item_to_idx = load_embeddings()
     if embeddings is None:
         embedding_generator = ItemEmbeddingGenerator()
         embeddings = embedding_generator.generate_item_embeddings(items)
         save_embeddings(embeddings)
         item_to_idx = {item: idx for idx, item in enumerate(sorted(embeddings.keys()))}
-
-    # Initialize retrieval with paper's parameters
+    
+    # Initialize retrieval
     retrieval = STARRetrieval(
         semantic_weight=0.5,
         temporal_decay=0.7,
         history_length=3
     )
-
-    # Log parameters
-    print(f"\nParameters:")
-    print(f"Semantic weight: {retrieval.semantic_weight}")
-    print(f"Temporal decay: {retrieval.temporal_decay}")
-    print(f"History length: {retrieval.history_length}")
-
-    # Set item mapping and compute relationships
     retrieval.item_to_idx = item_to_idx
     
-    print("Computing semantic relationships...")
+    # Compute relationships
     semantic_matrix = retrieval.compute_semantic_relationships(embeddings)
     retrieval.semantic_matrix = semantic_matrix
-
+    
     # Process collaborative relationships
-    print("Processing collaborative relationships...")
     interactions = [(review['reviewerID'], review['asin'], 
                     review['unixReviewTime'], review['overall']) 
                    for review in reviews]
-
-    # Split data and prepare sequences
+    
+    # Build user_all_items for negative sampling
+    user_all_items = build_user_all_items(interactions)
+    
+    # Split data
     train_interactions = get_training_interactions(reviews)
-    print("Preparing evaluation data...")
     validation_sequences = prepare_validation_data(interactions)
     test_sequences = prepare_evaluation_data(interactions)
-
-    # Compute collaborative relationships
+    
+    # 4. Verify evaluation splits
+    debugger.verify_evaluation_splits(test_sequences, reviews)
+    
+    # Process collaborative relationships
     collab_processor = CollaborativeRelationshipProcessor()
     collab_processor.process_interactions(train_interactions, item_mapping=retrieval.item_to_idx)
     collaborative_matrix = collab_processor.compute_collaborative_relationships(
         matrix_size=len(retrieval.item_to_idx)
     )
-    
-    if collaborative_matrix is None:
-        raise ValueError("Failed to compute collaborative relationships")
-    
     retrieval.collaborative_matrix = collaborative_matrix
-
-    # After computing relationships but before evaluation
-    analysis_results = run_full_analysis(reviews, items, retrieval)
-    print(analysis_results)
-
-    # Run validation
-    print("\n=== Running Validation ===")
-    evaluator = RecommendationEvaluator()
-    validation_metrics = evaluator.evaluate_recommendations(
-        test_sequences=validation_sequences,
+    
+    # 5. Debug negative sampling
+    debugger.debug_negative_sampling(
+        test_sequences=test_sequences,
         recommender=retrieval,
-        k_values=[5, 10],
-        n_negative_samples=99
+        user_all_items=user_all_items
     )
-    print("\nValidation Results:")
-    print_metrics_table(validation_metrics, dataset="Beauty")
-
-    # Run final evaluation
-    print("\n=== Running Test Evaluation ===")
+    
+    # 6. Analyze collaborative matrix
+    debugger.analyze_collaborative_matrix(collaborative_matrix)
+    
+    # Run evaluation
+    print("\n=== Running Evaluation ===")
+    evaluator = RecommendationEvaluator()
     test_metrics = evaluator.evaluate_recommendations(
         test_sequences=test_sequences,
         recommender=retrieval,
         k_values=[5, 10],
-        n_negative_samples=99
+        n_negative_samples=99,
+        user_all_items=user_all_items
     )
-    print("\nTest Results:")
+    
+    print("\nFinal Results:")
     print_metrics_table(test_metrics, dataset="Beauty")
 
 if __name__ == "__main__":
@@ -1878,6 +2201,175 @@ class STARRetrieval:
 
 
 
+```
+
+### src/temporal_utils.py
+
+```python
+from typing import List, Dict, Tuple
+from collections import defaultdict
+from datetime import datetime
+
+class TemporalProcessor:
+    @staticmethod
+    def sort_reviews_chronologically(reviews: List[Dict]) -> List[Dict]:
+        """Sort all reviews by user ID and timestamp"""
+        return sorted(reviews, key=lambda x: (x['reviewerID'], x['unixReviewTime']))
+
+    @staticmethod
+    def check_temporal_ordering(reviews: List[Dict]) -> List[Dict]:
+        """
+        Check and fix temporal ordering issues
+        Returns list of problematic sequences
+        """
+        issues = []
+        user_sequences = defaultdict(list)
+        
+        # Group by user
+        for review in reviews:
+            user_sequences[review['reviewerID']].append(review)
+            
+        # Check each user's sequence
+        for user_id, sequence in user_sequences.items():
+            # Sort by timestamp
+            sorted_sequence = sorted(sequence, key=lambda x: x['unixReviewTime'])
+            
+            # Check if original sequence was out of order
+            if sequence != sorted_sequence:
+                # Record the issue
+                issues.append({
+                    'user_id': user_id,
+                    'original_sequence': [(r['asin'], r['unixReviewTime']) for r in sequence],
+                    'sorted_sequence': [(r['asin'], r['unixReviewTime']) for r in sorted_sequence]
+                })
+                
+        return issues
+
+    @staticmethod
+    def verify_train_test_chronology(
+        train_interactions: List[Tuple],
+        test_sequences: List[Tuple],
+        validation_sequences: List[Tuple] = None
+    ) -> Dict:
+        """
+        Verify chronological integrity of train/test split
+        Returns dictionary of issues found
+        """
+        issues = {
+            'train_after_test': [],
+            'train_after_val': [],
+            'val_after_test': []
+        }
+        
+        # Build timeline for each user
+        user_timelines = defaultdict(dict)
+        
+        # Add training interactions to timeline
+        for user_id, item_id, timestamp, _ in train_interactions:
+            if user_id not in user_timelines:
+                user_timelines[user_id] = {'train': [], 'val': None, 'test': None}
+            user_timelines[user_id]['train'].append((item_id, timestamp))
+            
+        # Add test sequences
+        for user_id, history, test_item in test_sequences:
+            if user_id in user_timelines:
+                # Find test item timestamp (should be in original reviews)
+                test_timestamp = max(t for _, t in user_timelines[user_id]['train'] 
+                                  if _ == test_item)
+                user_timelines[user_id]['test'] = (test_item, test_timestamp)
+                
+        # Add validation sequences if provided
+        if validation_sequences:
+            for user_id, history, val_item in validation_sequences:
+                if user_id in user_timelines:
+                    # Find validation item timestamp
+                    val_timestamp = max(t for _, t in user_timelines[user_id]['train'] 
+                                     if _ == val_item)
+                    user_timelines[user_id]['val'] = (val_item, val_timestamp)
+        
+        # Check chronological integrity
+        for user_id, timeline in user_timelines.items():
+            train_times = [t for _, t in timeline['train']]
+            test_time = timeline['test'][1] if timeline['test'] else None
+            val_time = timeline['val'][1] if timeline['val'] else None
+            
+            # Check if any training interaction is after test
+            if test_time and any(t > test_time for t in train_times):
+                issues['train_after_test'].append({
+                    'user_id': user_id,
+                    'test_time': test_time,
+                    'problematic_train': [(item, t) for item, t in timeline['train'] 
+                                        if t > test_time]
+                })
+                
+            # Check validation chronology
+            if val_time:
+                if any(t > val_time for t in train_times):
+                    issues['train_after_val'].append({
+                        'user_id': user_id,
+                        'val_time': val_time,
+                        'problematic_train': [(item, t) for item, t in timeline['train'] 
+                                            if t > val_time]
+                    })
+                if test_time and val_time > test_time:
+                    issues['val_after_test'].append({
+                        'user_id': user_id,
+                        'val_time': val_time,
+                        'test_time': test_time
+                    })
+                    
+        return issues
+
+    @staticmethod
+    def print_chronology_check(reviews: List[Dict]):
+        """Print detailed chronological analysis of reviews"""
+        print("\n=== Chronological Analysis ===")
+        
+        # Sort reviews
+        sorted_reviews = TemporalProcessor.sort_reviews_chronologically(reviews)
+        
+        # Check for ordering issues
+        issues = TemporalProcessor.check_temporal_ordering(reviews)
+        
+        if issues:
+            print(f"\nFound {len(issues)} users with temporal ordering issues:")
+            for i, issue in enumerate(issues[:5], 1):  # Show first 5 issues
+                print(f"\nIssue {i}:")
+                print(f"User: {issue['user_id']}")
+                print("Original sequence:")
+                for item, time in issue['original_sequence']:
+                    time_str = datetime.fromtimestamp(time).strftime('%Y-%m-%d')
+                    print(f"  {time_str}: {item}")
+                print("Sorted sequence:")
+                for item, time in issue['sorted_sequence']:
+                    time_str = datetime.fromtimestamp(time).strftime('%Y-%m-%d')
+                    print(f"  {time_str}: {item}")
+                    
+        # Print overall statistics
+        print("\nTemporal Statistics:")
+        timestamps = [r['unixReviewTime'] for r in reviews]
+        min_time = datetime.fromtimestamp(min(timestamps))
+        max_time = datetime.fromtimestamp(max(timestamps))
+        print(f"Date range: {min_time.strftime('%Y-%m-%d')} to {max_time.strftime('%Y-%m-%d')}")
+        
+        # Check for same-timestamp reviews
+        user_day_counts = defaultdict(lambda: defaultdict(int))
+        for r in reviews:
+            day = datetime.fromtimestamp(r['unixReviewTime']).strftime('%Y-%m-%d')
+            user_day_counts[r['reviewerID']][day] += 1
+            
+        multiple_reviews = sum(1 for user in user_day_counts.values() 
+                             for count in user.values() if count > 1)
+        print(f"\nUsers with multiple reviews on same day: {multiple_reviews}")
+        
+        if multiple_reviews > 0:
+            print("\nSample cases of multiple reviews per day:")
+            shown = 0
+            for user_id, day_counts in user_day_counts.items():
+                for day, count in day_counts.items():
+                    if count > 1 and shown < 5:
+                        print(f"User {user_id}: {count} reviews on {day}")
+                        shown += 1
 ```
 
 ### src/utils.py

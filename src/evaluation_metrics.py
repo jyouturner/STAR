@@ -119,40 +119,48 @@ class RecommendationEvaluator:
         return metrics
 
 
-def prepare_evaluation_data(interactions, min_sequence_length=5):
+def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int = 5) -> List[Tuple]:
     """
     Prepare evaluation data following paper's protocol:
-    - Maintain temporal ordering
-    - Minimum sequence length of 5
-    - Use last item as test item
-    - Use previous items as history
+    - Maintain strict temporal ordering
+    - Use chronologically last item as test item
+    - Previous items as history
+    - Minimum sequence length requirement
     
     Args:
         interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length (default: 5)
+        min_sequence_length: Minimum required sequence length
         
     Returns:
         List of (user_id, history, test_item) tuples
     """
-    # Sort all interactions by user and timestamp
-    sorted_interactions = sorted(interactions, key=lambda x: (x[0], x[2]))
-    
-    # Group by user while maintaining temporal order
-    user_sequences = {}
-    for user_id, item_id, timestamp, rating in sorted_interactions:
-        if user_id not in user_sequences:
-            user_sequences[user_id] = []
+    # Group interactions by user while maintaining temporal order
+    user_sequences = defaultdict(list)
+    for user_id, item_id, timestamp, rating in interactions:
         user_sequences[user_id].append((item_id, timestamp, rating))
     
     test_sequences = []
+    skipped_users = 0
+    timestamp_issues = 0
     
     for user_id, interactions in user_sequences.items():
+        # Sort user's interactions by timestamp
+        sorted_items = sorted(interactions, key=lambda x: x[1])
+        
         # Skip if sequence is too short
-        if len(interactions) < min_sequence_length:
+        if len(sorted_items) < min_sequence_length:
+            skipped_users += 1
             continue
         
-        # Get items in temporal order
-        items = [item for item, _, _ in interactions]
+        # Check for duplicate timestamps
+        timestamps = [t for _, t, _ in sorted_items]
+        if len(set(timestamps)) != len(timestamps):
+            timestamp_issues += 1
+            # For items with same timestamp, keep order as is
+            # This matches paper's handling of same-timestamp reviews
+        
+        # Extract items in temporal order
+        items = [item for item, _, _ in sorted_items]
         
         # Last item is test item
         test_item = items[-1]
@@ -161,44 +169,55 @@ def prepare_evaluation_data(interactions, min_sequence_length=5):
         
         test_sequences.append((user_id, history, test_item))
     
+    print(f"\nEvaluation data preparation:")
+    print(f"Total users processed: {len(user_sequences)}")
+    print(f"Users skipped (too short): {skipped_users}")
+    print(f"Users with timestamp issues: {timestamp_issues}")
+    print(f"Final test sequences: {len(test_sequences)}")
+    
     return test_sequences
 
-def prepare_validation_data(interactions, min_sequence_length=5):
+def prepare_validation_data(interactions: List[Tuple], min_sequence_length: int = 5) -> List[Tuple]:
     """
     Prepare validation data similar to test data but using second-to-last item
     
     Args:
         interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length (default: 5)
+        min_sequence_length: Minimum required sequence length
         
     Returns:
         List of (user_id, history, validation_item) tuples
     """
-    # Sort all interactions by user and timestamp
-    sorted_interactions = sorted(interactions, key=lambda x: (x[0], x[2]))
-    
-    # Group by user while maintaining temporal order
-    user_sequences = {}
-    for user_id, item_id, timestamp, rating in sorted_interactions:
-        if user_id not in user_sequences:
-            user_sequences[user_id] = []
+    # Group and sort by user and timestamp
+    user_sequences = defaultdict(list)
+    for user_id, item_id, timestamp, rating in interactions:
         user_sequences[user_id].append((item_id, timestamp, rating))
     
     validation_sequences = []
+    skipped_users = 0
     
     for user_id, interactions in user_sequences.items():
+        # Sort user's interactions by timestamp
+        sorted_items = sorted(interactions, key=lambda x: x[1])
+        
         # Skip if sequence is too short
-        if len(interactions) < min_sequence_length:
+        if len(sorted_items) < min_sequence_length:
+            skipped_users += 1
             continue
         
-        # Get items in temporal order
-        items = [item for item, _, _ in interactions]
+        # Extract items in temporal order
+        items = [item for item, _, _ in sorted_items]
         
         # Second-to-last item is validation item
         validation_item = items[-2]
-        # Previous items are history
+        # Previous items are history (excluding last and validation items)
         history = items[:-2]
         
         validation_sequences.append((user_id, history, validation_item))
+    
+    print(f"\nValidation data preparation:")
+    print(f"Total users processed: {len(user_sequences)}")
+    print(f"Users skipped (too short): {skipped_users}")
+    print(f"Final validation sequences: {len(validation_sequences)}")
     
     return validation_sequences
