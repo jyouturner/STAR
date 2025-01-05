@@ -5,10 +5,7 @@ from tqdm import tqdm
 import numpy as np
 
 def build_user_all_items(interactions: List[Tuple]) -> Dict[str, set]:
-    """
-    Build a dictionary mapping user_id -> set of all item_ids 
-    that user has interacted with (at any time).
-    """
+    """Build dictionary mapping user_id -> set of all item_ids they've interacted with"""
     user_all_items = defaultdict(set)
     for user_id, item_id, timestamp, rating in interactions:
         user_all_items[user_id].add(item_id)
@@ -40,18 +37,17 @@ class RecommendationEvaluator:
         test_sequences: List[Tuple],
         recommender,
         k_values: List[int],
-        n_negative_samples: int = 99,  # Paper uses 99 negative samples
-        user_all_items: Dict[str, set] = None  # NEW: Dictionary of all items per user
+        user_all_items: Dict[str, set] = None
     ) -> Dict[str, float]:
         """
-        Evaluate recommendations using the paper's protocol with proper negative sampling
-        that excludes all items a user has interacted with at any point in time
+        Evaluate recommendations using full item set as candidates
+        (matching paper's protocol)
         """
         print("\n=== Starting Evaluation ===")
         metrics = {f"hit@{k}": 0.0 for k in k_values}
         metrics.update({f"ndcg@{k}": 0.0 for k in k_values})
         
-        # Get all valid items for negative sampling
+        # Get all possible items
         valid_items = list(recommender.item_to_idx.keys())
         total_sequences = len(test_sequences)
         
@@ -71,28 +67,18 @@ class RecommendationEvaluator:
             if not valid_history:
                 continue
 
-            # NEW: Build set of items to exclude from negative sampling
-            if user_all_items is not None and user_id in user_all_items:
-                # Exclude any item the user has interacted with (past OR future)
-                excluded_items = set(user_all_items[user_id])
-            else:
-                # Fallback to old logic if user_all_items not provided
-                excluded_items = set(history) | {next_item}
+            # Get all items this user hasn't interacted with
+            user_items = user_all_items.get(user_id, set()) if user_all_items else set(history)
+            candidate_items = [item for item in valid_items if item not in user_items]
             
-            # Sample negative items (excluding all user interactions)
-            negative_candidates = set()
-            while len(negative_candidates) < n_negative_samples:
-                item = random.choice(valid_items)
-                if item not in excluded_items:
-                    negative_candidates.add(item)
+            # Add ground truth item
+            if next_item not in candidate_items:
+                candidate_items.append(next_item)
             
-            # Create candidate set with negative samples + positive item
-            candidate_items = list(negative_candidates) + [next_item]
-            
-            # Get recommendations
+            # Get recommendations using all candidates
             recommendations = recommender.score_candidates(
                 user_history=valid_history[-recommender.history_length:],
-                ratings=[1.0] * len(valid_history),  # As per paper, ignore ratings
+                ratings=[1.0] * len(valid_history),  # Per paper, ignore ratings
                 candidate_items=candidate_items,
                 top_k=max(k_values)
             )
@@ -109,6 +95,15 @@ class RecommendationEvaluator:
                     recommended_items, next_item, k)
                 metrics[f"ndcg@{k}"] += self.calculate_ndcg_at_k(
                     recommended_items, next_item, k)
+            
+            # Print some stats every 1000 sequences
+            if idx % 1000 == 0:
+                print(f"\nIntermediate stats at sequence {idx}:")
+                print(f"Average candidates per user: {len(candidate_items)}")
+                print(f"Current metrics:")
+                for metric, value in metrics.items():
+                    normalized_value = value / successful_preds if successful_preds > 0 else 0
+                    print(f"{metric}: {normalized_value:.4f}")
         
         # Normalize metrics
         if successful_preds > 0:
@@ -126,13 +121,6 @@ def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int 
     - Use chronologically last item as test item
     - Previous items as history
     - Minimum sequence length requirement
-    
-    Args:
-        interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length
-        
-    Returns:
-        List of (user_id, history, test_item) tuples
     """
     # Group interactions by user while maintaining temporal order
     user_sequences = defaultdict(list)
@@ -156,9 +144,7 @@ def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int 
         timestamps = [t for _, t, _ in sorted_items]
         if len(set(timestamps)) != len(timestamps):
             timestamp_issues += 1
-            # For items with same timestamp, keep order as is
-            # This matches paper's handling of same-timestamp reviews
-        
+            
         # Extract items in temporal order
         items = [item for item, _, _ in sorted_items]
         
@@ -178,17 +164,7 @@ def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int 
     return test_sequences
 
 def prepare_validation_data(interactions: List[Tuple], min_sequence_length: int = 5) -> List[Tuple]:
-    """
-    Prepare validation data similar to test data but using second-to-last item
-    
-    Args:
-        interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length
-        
-    Returns:
-        List of (user_id, history, validation_item) tuples
-    """
-    # Group and sort by user and timestamp
+    """Prepare validation data using second-to-last item"""
     user_sequences = defaultdict(list)
     for user_id, item_id, timestamp, rating in interactions:
         user_sequences[user_id].append((item_id, timestamp, rating))
@@ -197,10 +173,10 @@ def prepare_validation_data(interactions: List[Tuple], min_sequence_length: int 
     skipped_users = 0
     
     for user_id, interactions in user_sequences.items():
-        # Sort user's interactions by timestamp
+        # Sort by timestamp
         sorted_items = sorted(interactions, key=lambda x: x[1])
         
-        # Skip if sequence is too short
+        # Skip if too short
         if len(sorted_items) < min_sequence_length:
             skipped_users += 1
             continue

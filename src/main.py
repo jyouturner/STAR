@@ -31,6 +31,8 @@ def save_embeddings(embeddings, save_dir='data/embeddings'):
     print(f"Saved embeddings to {save_dir}")
 
 def load_embeddings(load_dir='data/embeddings'):
+    # only for testing and debugging
+    return None, None
     """Load embeddings and create item mapping"""
     try:
         embedding_array = np.load(f'{load_dir}/embeddings.npy')
@@ -74,9 +76,10 @@ def main():
     items = get_items_from_data(reviews, metadata)
     embeddings, item_to_idx = load_embeddings()
     if embeddings is None:
-        embedding_generator = ItemEmbeddingGenerator()
+        # follow the A.1 appendix from the STAR paper
+        embedding_generator = ItemEmbeddingGenerator(output_dimension=768, include_fields={'title', 'description', 'category', 'brand', 'price', 'sales_rank'})
         embeddings = embedding_generator.generate_item_embeddings(items)
-        save_embeddings(embeddings)
+        #save_embeddings(embeddings)
         item_to_idx = {item: idx for idx, item in enumerate(sorted(embeddings.keys()))}
     
     # Initialize retrieval
@@ -132,7 +135,7 @@ def main():
         test_sequences=test_sequences,
         recommender=retrieval,
         k_values=[5, 10],
-        n_negative_samples=99,
+        #n_negative_samples=99,
         user_all_items=user_all_items
     )
     
