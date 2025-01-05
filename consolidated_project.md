@@ -10,7 +10,6 @@ src/collaborative_relationships.py
 src/data_debug.py
 src/data_quality.py
 src/evaluation_metrics.py
-src/item_embeddings_huggingface.py
 src/item_embeddings_vertex_ai.py
 src/main.py
 src/model_analysis.py
@@ -837,10 +836,7 @@ from tqdm import tqdm
 import numpy as np
 
 def build_user_all_items(interactions: List[Tuple]) -> Dict[str, set]:
-    """
-    Build a dictionary mapping user_id -> set of all item_ids 
-    that user has interacted with (at any time).
-    """
+    """Build dictionary mapping user_id -> set of all item_ids they've interacted with"""
     user_all_items = defaultdict(set)
     for user_id, item_id, timestamp, rating in interactions:
         user_all_items[user_id].add(item_id)
@@ -872,18 +868,17 @@ class RecommendationEvaluator:
         test_sequences: List[Tuple],
         recommender,
         k_values: List[int],
-        n_negative_samples: int = 99,  # Paper uses 99 negative samples
-        user_all_items: Dict[str, set] = None  # NEW: Dictionary of all items per user
+        user_all_items: Dict[str, set] = None
     ) -> Dict[str, float]:
         """
-        Evaluate recommendations using the paper's protocol with proper negative sampling
-        that excludes all items a user has interacted with at any point in time
+        Evaluate recommendations using full item set as candidates
+        (matching paper's protocol)
         """
         print("\n=== Starting Evaluation ===")
         metrics = {f"hit@{k}": 0.0 for k in k_values}
         metrics.update({f"ndcg@{k}": 0.0 for k in k_values})
         
-        # Get all valid items for negative sampling
+        # Get all possible items
         valid_items = list(recommender.item_to_idx.keys())
         total_sequences = len(test_sequences)
         
@@ -903,28 +898,18 @@ class RecommendationEvaluator:
             if not valid_history:
                 continue
 
-            # NEW: Build set of items to exclude from negative sampling
-            if user_all_items is not None and user_id in user_all_items:
-                # Exclude any item the user has interacted with (past OR future)
-                excluded_items = set(user_all_items[user_id])
-            else:
-                # Fallback to old logic if user_all_items not provided
-                excluded_items = set(history) | {next_item}
+            # Get all items this user hasn't interacted with
+            user_items = user_all_items.get(user_id, set()) if user_all_items else set(history)
+            candidate_items = [item for item in valid_items if item not in user_items]
             
-            # Sample negative items (excluding all user interactions)
-            negative_candidates = set()
-            while len(negative_candidates) < n_negative_samples:
-                item = random.choice(valid_items)
-                if item not in excluded_items:
-                    negative_candidates.add(item)
+            # Add ground truth item
+            if next_item not in candidate_items:
+                candidate_items.append(next_item)
             
-            # Create candidate set with negative samples + positive item
-            candidate_items = list(negative_candidates) + [next_item]
-            
-            # Get recommendations
+            # Get recommendations using all candidates
             recommendations = recommender.score_candidates(
                 user_history=valid_history[-recommender.history_length:],
-                ratings=[1.0] * len(valid_history),  # As per paper, ignore ratings
+                ratings=[1.0] * len(valid_history),  # Per paper, ignore ratings
                 candidate_items=candidate_items,
                 top_k=max(k_values)
             )
@@ -941,6 +926,15 @@ class RecommendationEvaluator:
                     recommended_items, next_item, k)
                 metrics[f"ndcg@{k}"] += self.calculate_ndcg_at_k(
                     recommended_items, next_item, k)
+            
+            # Print some stats every 1000 sequences
+            if idx % 1000 == 0:
+                print(f"\nIntermediate stats at sequence {idx}:")
+                print(f"Average candidates per user: {len(candidate_items)}")
+                print(f"Current metrics:")
+                for metric, value in metrics.items():
+                    normalized_value = value / successful_preds if successful_preds > 0 else 0
+                    print(f"{metric}: {normalized_value:.4f}")
         
         # Normalize metrics
         if successful_preds > 0:
@@ -958,13 +952,6 @@ def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int 
     - Use chronologically last item as test item
     - Previous items as history
     - Minimum sequence length requirement
-    
-    Args:
-        interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length
-        
-    Returns:
-        List of (user_id, history, test_item) tuples
     """
     # Group interactions by user while maintaining temporal order
     user_sequences = defaultdict(list)
@@ -988,9 +975,7 @@ def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int 
         timestamps = [t for _, t, _ in sorted_items]
         if len(set(timestamps)) != len(timestamps):
             timestamp_issues += 1
-            # For items with same timestamp, keep order as is
-            # This matches paper's handling of same-timestamp reviews
-        
+            
         # Extract items in temporal order
         items = [item for item, _, _ in sorted_items]
         
@@ -1010,17 +995,7 @@ def prepare_evaluation_data(interactions: List[Tuple], min_sequence_length: int 
     return test_sequences
 
 def prepare_validation_data(interactions: List[Tuple], min_sequence_length: int = 5) -> List[Tuple]:
-    """
-    Prepare validation data similar to test data but using second-to-last item
-    
-    Args:
-        interactions: List of (user_id, item_id, timestamp, rating) tuples
-        min_sequence_length: Minimum required sequence length
-        
-    Returns:
-        List of (user_id, history, validation_item) tuples
-    """
-    # Group and sort by user and timestamp
+    """Prepare validation data using second-to-last item"""
     user_sequences = defaultdict(list)
     for user_id, item_id, timestamp, rating in interactions:
         user_sequences[user_id].append((item_id, timestamp, rating))
@@ -1029,10 +1004,10 @@ def prepare_validation_data(interactions: List[Tuple], min_sequence_length: int 
     skipped_users = 0
     
     for user_id, interactions in user_sequences.items():
-        # Sort user's interactions by timestamp
+        # Sort by timestamp
         sorted_items = sorted(interactions, key=lambda x: x[1])
         
-        # Skip if sequence is too short
+        # Skip if too short
         if len(sorted_items) < min_sequence_length:
             skipped_users += 1
             continue
@@ -1053,128 +1028,6 @@ def prepare_validation_data(interactions: List[Tuple], min_sequence_length: int 
     print(f"Final validation sequences: {len(validation_sequences)}")
     
     return validation_sequences
-```
-
-### src/item_embeddings_huggingface.py
-
-```python
-from typing import Dict, Any
-import numpy as np
-import json
-from star_retrieval import STARRetrieval
-from transformers import AutoTokenizer, AutoModel
-import torch
-
-class ItemEmbeddingGenerator:
-    def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2'):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
-        
-    def create_item_prompt(self, item: Dict) -> str:
-        """Create prompt following paper's approach, excluding ID/URL fields"""
-        prompt_parts = []
-        
-        if 'title' in item:
-            prompt_parts.append(f"Title: {item['title']}")
-            
-        if 'description' in item:
-            prompt_parts.append(f"Description: {item['description']}")
-            
-        if 'categories' in item:
-            cats = ' > '.join(item['categories'][-1]) if isinstance(item['categories'], list) else str(item['categories'])
-            prompt_parts.append(f"Category: {cats}")
-            
-        if 'brand' in item:
-            prompt_parts.append(f"Brand: {item['brand']}")
-            
-        if 'salesRank' in item:
-            if isinstance(item['salesRank'], dict):
-                ranks = [f"{cat}: {rank}" for cat, rank in item['salesRank'].items()]
-                prompt_parts.append(f"Sales Rank: {', '.join(ranks)}")
-            else:
-                prompt_parts.append(f"Sales Rank: {item['salesRank']}")
-                
-        if 'price' in item:
-            prompt_parts.append(f"Price: ${item['price']}")
-            
-        return "\n".join(prompt_parts)
-    
-    def get_embedding(self, text: str) -> np.ndarray:
-        """
-        Get embedding for a text string using the Hugging Face model
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            Numpy array of embedding values
-        """
-        inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-        
-        embeddings = outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
-        return embeddings
-
-    def generate_item_embeddings(self, items: Dict[str, Dict]) -> Dict[str, np.ndarray]:
-        """
-        Generate embeddings for multiple items
-        
-        Args:
-            items: Dictionary mapping item IDs to their metadata
-            
-        Returns:
-            Dictionary mapping item IDs to their embeddings
-        """
-        embeddings = {}
-        for item_id, item_data in items.items():
-            prompt = self.create_item_prompt(item_data)
-            embedding = self.get_embedding(prompt)
-            embeddings[item_id] = embedding
-        return embeddings
-
-# Example usage:
-def main():
-    # Example items (similar to Amazon product data used in the paper)
-    items = {
-        "B001": {
-            "title": "Professional Makeup Brush Set",
-            "description": "Set of 12 professional makeup brushes with synthetic bristles",
-            "categories": ["Beauty", "Makeup", "Brushes & Tools"],
-            "brand": "BeautyPro",
-            "salesRank": {"Beauty": 1250},
-            "price": 24.99
-        },
-        "B002": {
-            "title": "Eyeshadow Palette - Natural Colors",
-            "description": "15 highly pigmented natural eyeshadow colors",
-            "categories": ["Beauty", "Makeup", "Eyes", "Eyeshadow"],
-            "brand": "BeautyPro",
-            "salesRank": {"Beauty": 2100},
-            "price": 19.99
-        }
-    }
-    
-    # Generate embeddings
-    generator = ItemEmbeddingGenerator()
-    item_embeddings = generator.generate_item_embeddings(items)
-    
-    # Use with STAR retrieval
-    retrieval = STARRetrieval(semantic_weight=0.5, temporal_decay=0.7, history_length=3)
-    retrieval.compute_semantic_relationships(item_embeddings)
-    
-    # Example output of embeddings and similarity
-    print(f"Embedding dimension: {len(item_embeddings['B001'])}")
-    semantic_sim = retrieval.semantic_matrix[0,1]
-    print(f"Semantic similarity between items: {semantic_sim:.3f}")
-
-if __name__ == "__main__":
-    main()
-
 ```
 
 ### src/item_embeddings_vertex_ai.py
@@ -1348,6 +1201,8 @@ def save_embeddings(embeddings, save_dir='data/embeddings'):
     print(f"Saved embeddings to {save_dir}")
 
 def load_embeddings(load_dir='data/embeddings'):
+    # only for testing and debugging
+    return None, None
     """Load embeddings and create item mapping"""
     try:
         embedding_array = np.load(f'{load_dir}/embeddings.npy')
@@ -1391,9 +1246,10 @@ def main():
     items = get_items_from_data(reviews, metadata)
     embeddings, item_to_idx = load_embeddings()
     if embeddings is None:
-        embedding_generator = ItemEmbeddingGenerator()
+        # follow the A.1 appendix from the STAR paper
+        embedding_generator = ItemEmbeddingGenerator(output_dimension=768, include_fields={'title', 'description', 'category', 'brand', 'price', 'sales_rank'})
         embeddings = embedding_generator.generate_item_embeddings(items)
-        save_embeddings(embeddings)
+        #save_embeddings(embeddings)
         item_to_idx = {item: idx for idx, item in enumerate(sorted(embeddings.keys()))}
     
     # Initialize retrieval
@@ -1449,7 +1305,7 @@ def main():
         test_sequences=test_sequences,
         recommender=retrieval,
         k_values=[5, 10],
-        n_negative_samples=99,
+        #n_negative_samples=99,
         user_all_items=user_all_items
     )
     
