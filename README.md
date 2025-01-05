@@ -6,6 +6,8 @@ This repository implements the retrieval pipeline from the paper [STAR: A Simple
 2. User interaction patterns for collaborative signals
 3. Temporal decay for recent history weighting
 
+<img src="retrieval_pipeline.jpg" alt="STAR Retrieval Pipeline" width="500">
+
 ---
 
 ## Key Components & Implementation Details
