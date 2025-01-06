@@ -63,10 +63,8 @@ v2_purchase/
 
 4. **Scoring** (`star_retrieval_purchase.py`):  
    - For each user’s **history** (the last \(l\) purchases), we compute a time-based exponent to weigh older purchases less.  
-   - The final formula looks like:
-     \[
-     \text{score}(x) = \frac{1}{n}\sum_{j=1}^{n} \Bigl( \lambda^{\mathrm{timeDecay}(j)} \times [\, \alpha\,R_s(x, j) + (1 - \alpha)\,R_c(x, j)\,]\times \text{QuantityFactor}_j \Bigr).
-     \]
+   - The final formula looks like: $\mathrm{score}(x) = \frac{1}{n}\sum_{j=1}^{n} \Bigl( \lambda^{\mathrm{timeDecay}(j)} \cdot [\alpha R_s(x, j) + (1 - \alpha)R_c(x, j)]\cdot \mathrm{QuantityFactor}\_j \Bigr)$
+
    - `timeDecay(j)` might be `(currentTime - purchaseTime_j)/30` if we measure months, for instance.  
    - `QuantityFactor_j` can be `log1p(quantity_j)` if desired.
 
